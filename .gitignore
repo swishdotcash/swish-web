@@ -47,3 +47,8 @@ privacycash-cache/
 
 /figma
 /figma-2
+
+# Claude Code local config
+.agents/
+.claude/
+skills-lock.json
