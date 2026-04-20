@@ -41,7 +41,8 @@ export function useUserRegistration() {
       console.error("User registration failed:", err);
       registeredRef.current = false;
     });
-  }, [ready, authenticated, user, wallets]);
+  // Stable string deps (user.id, wallet address) instead of wallets array (new ref each render)
+  }, [ready, authenticated, user?.id, user?.wallet?.address]);
 
   // Reset on logout
   useEffect(() => {

@@ -1,4 +1,5 @@
 export { Logo } from "./Logo";
+export { SuccessParticles } from "./SuccessParticles";
 export { Footer } from "./Footer";
 export { ActionButton } from "./ActionButton";
 export { NumberPad } from "./NumberPad";

@@ -1,16 +1,23 @@
 "use client";
 
-import { useEffect, useState } from "react";
+export const dynamic = "force-dynamic";
+
+import { useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
+import lazyLoad from "next/dynamic";
+import { staggerContainer, staggerItem, fadeUp } from "@/lib/motionVariants";
 import Image from "next/image";
 import Link from "next/link";
 import { usePrivy } from "@privy-io/react-auth";
 import { useExportWallet } from "@privy-io/react-auth/solana";
 import { formatNumber } from "@/utils";
-import { Spinner, AddFundsModal, WithdrawModal } from "@/components";
+import { Spinner } from "@/components/Spinner";
 import { useSessionSignature } from "@/hooks/useSessionSignature";
 import { useUSDCBalance } from "@/hooks/useUSDCBalance";
 import { useSOLBalance } from "@/hooks/useSOLBalance";
+
+const AddFundsModal = lazyLoad(() => import("@/components/AddFundsModal").then(m => ({ default: m.AddFundsModal })), { ssr: false });
+const WithdrawModal = lazyLoad(() => import("@/components/WithdrawModal").then(m => ({ default: m.WithdrawModal })), { ssr: false });
 
 interface Activity {
   id: string;
@@ -40,7 +47,7 @@ interface UserData {
 
 // Status colors
 const STATUS_COLORS = {
-  open: "#CB9C00",
+  open: "#8A6A00",    // darkened from #CB9C00 — achieves 4.6:1 contrast on #fafafa (WCAG AA)
   settled: "#008834",
   cancelled: "#CB0000",
 };
@@ -301,46 +308,50 @@ export default function ProfilePage() {
         </div>
 
         {/* Tab Toggle */}
-        <div className="w-full max-w-[320px] flex mb-6 bg-[#121212]/5 rounded-full p-1">
-          <button
-            onClick={() => setActiveTab("wallet")}
-            className={`flex-1 h-8 rounded-full text-sm font-medium transition-all ${
-              activeTab === "wallet"
-                ? "bg-[#121212] text-[#fafafa]"
-                : "text-[#121212]/50"
-            }`}
-          >
-            Wallet
-          </button>
-          <button
-            onClick={() => setActiveTab("activity")}
-            className={`flex-1 h-8 rounded-full text-sm font-medium transition-all ${
-              activeTab === "activity"
-                ? "bg-[#121212] text-[#fafafa]"
-                : "text-[#121212]/50"
-            }`}
-          >
-            Activity
-          </button>
+        <div className="w-full max-w-[320px] flex mb-6 bg-[#121212]/5 rounded-full p-1 relative">
+          {(["wallet", "activity"] as TabType[]).map((tab) => (
+            <button
+              key={tab}
+              onClick={() => setActiveTab(tab)}
+              className="relative flex-1 h-8 rounded-full text-sm font-medium z-10"
+            >
+              {activeTab === tab && (
+                <motion.div
+                  layoutId="profile-tab-bg"
+                  className="absolute inset-0 bg-[#121212] rounded-full"
+                  transition={{ type: "spring", damping: 28, stiffness: 350 }}
+                />
+              )}
+              <span
+                className="relative z-10 transition-colors duration-150"
+                style={{ color: activeTab === tab ? "#fafafa" : "rgba(18,18,18,0.5)" }}
+              >
+                {tab.charAt(0).toUpperCase() + tab.slice(1)}
+              </span>
+            </button>
+          ))}
         </div>
 
         <AnimatePresence mode="wait">
           {activeTab === "wallet" && (
             <motion.div
               key="wallet"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
+              variants={fadeUp}
+              initial="hidden"
+              animate="visible"
+              exit="exit"
               className="w-full max-w-[320px]"
             >
               {/* Total Balance */}
               <div className="text-center mb-6">
                 <p className="text-[#121212]/50 text-sm mb-1">Total Balance</p>
-                <p className="text-4xl font-normal text-[#121212]">
-                  {usdcLoading || solLoading
-                    ? "..."
-                    : `$${formatNumber(totalUSD)}`}
-                </p>
+                {usdcLoading || solLoading ? (
+                  <div className="skeleton h-10 w-32 mx-auto" />
+                ) : (
+                  <p className="text-4xl font-normal text-[#121212]">
+                    {`$${formatNumber(totalUSD)}`}
+                  </p>
+                )}
               </div>
 
               {/* Token Rows */}
@@ -356,13 +367,19 @@ export default function ProfilePage() {
                   <div className="flex-1">
                     <p className="text-[#121212] font-medium">USDC</p>
                     <p className="text-[#121212]/50 text-sm">
-                      {usdcLoading
-                        ? "..."
-                        : `${formatNumber(usdcBalance || 0)} USDC`}
+                      {usdcLoading ? (
+                        <span className="skeleton h-3.5 w-20 inline-block" />
+                      ) : (
+                        `${formatNumber(usdcBalance || 0)} USDC`
+                      )}
                     </p>
                   </div>
                   <p className="text-[#121212] font-medium">
-                    {usdcLoading ? "..." : `$${formatNumber(usdcBalance || 0)}`}
+                    {usdcLoading ? (
+                      <span className="skeleton h-4 w-14 inline-block" />
+                    ) : (
+                      `$${formatNumber(usdcBalance || 0)}`
+                    )}
                   </p>
                 </div>
 
@@ -377,15 +394,19 @@ export default function ProfilePage() {
                   <div className="flex-1">
                     <p className="text-[#121212] font-medium">SOL</p>
                     <p className="text-[#121212]/50 text-sm">
-                      {solLoading
-                        ? "..."
-                        : `${(solBalance || 0).toFixed(4)} SOL`}
+                      {solLoading ? (
+                        <span className="skeleton h-3.5 w-20 inline-block" />
+                      ) : (
+                        `${(solBalance || 0).toFixed(4)} SOL`
+                      )}
                     </p>
                   </div>
                   <p className="text-[#121212] font-medium">
-                    {solLoading
-                      ? "..."
-                      : `$${formatNumber(solBalanceUSD || 0)}`}
+                    {solLoading ? (
+                      <span className="skeleton h-4 w-14 inline-block" />
+                    ) : (
+                      `$${formatNumber(solBalanceUSD || 0)}`
+                    )}
                   </p>
                 </div>
               </div>
@@ -470,9 +491,10 @@ export default function ProfilePage() {
           {activeTab === "activity" && (
             <motion.div
               key="activity"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
+              variants={fadeUp}
+              initial="hidden"
+              animate="visible"
+              exit="exit"
               className="w-full max-w-[320px] h-111.25 overflow-y-auto overflow-x-hidden"
             >
               {allActivities.length === 0 ? (
@@ -480,11 +502,18 @@ export default function ProfilePage() {
                   No activity yet
                 </p>
               ) : (
-                <div className="space-y-2">
+                <motion.div
+                  variants={staggerContainer}
+                  initial="hidden"
+                  animate="visible"
+                  className="space-y-2"
+                >
                   {allActivities.map((activity) => (
-                    <ActivityItem key={activity.id} activity={activity} />
+                    <motion.div key={activity.id} variants={staggerItem}>
+                      <ActivityItem activity={activity} />
+                    </motion.div>
                   ))}
-                </div>
+                </motion.div>
               )}
             </motion.div>
           )}

@@ -7,9 +7,11 @@ import { PublicKey } from "@solana/web3.js";
 import { Modal } from "./Modal";
 import { Spinner } from "./Spinner";
 import { QRScanner } from "./QRScanner";
+import { SuccessParticles } from "./SuccessParticles";
 import { formatNumber } from "@/utils";
 import { useSendTransaction } from "@/hooks/useSendTransaction";
 import { useFee } from "@/hooks/useFee";
+import { fadeUp, scaleIn } from "@/lib/motionVariants";
 
 interface SendModalProps {
   isOpen: boolean;
@@ -168,9 +170,10 @@ export function SendModal({
           {state === "input" && (
             <motion.div
               key="input"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
+              variants={fadeUp}
+              initial="hidden"
+              animate="visible"
+              exit="exit"
             >
               {/* Recipient Type Toggle */}
               <div className="flex mb-4 bg-[#121212]/5 rounded-full p-1">
@@ -214,11 +217,12 @@ export function SendModal({
               <div className="mb-6">
                 {recipientType === "wallet" ? (
                   <>
-                    <label className="text-sm text-[#121212]/50 mb-1 block">
+                    <label htmlFor="send-wallet-address" className="text-sm text-[#121212]/50 mb-1 block">
                       Enter wallet address
                     </label>
                     <div className="flex gap-2">
                       <input
+                        id="send-wallet-address"
                         type="text"
                         value={walletAddress}
                         onChange={(e) => setWalletAddress(e.target.value)}
@@ -227,11 +231,13 @@ export function SendModal({
                       />
                       <button
                         onClick={() => setShowQRScanner(true)}
+                        aria-label="Scan QR code"
                         className="w-12 h-12 rounded-full border border-[#121212]/10 flex items-center justify-center hover:bg-[#121212]/5 transition-colors shrink-0"
                       >
                         <Image
                           src="/assets/scan-icon.svg"
-                          alt="Scan QR"
+                          alt=""
+                          aria-hidden="true"
                           width={20}
                           height={20}
                         />
@@ -240,10 +246,11 @@ export function SendModal({
                   </>
                 ) : (
                   <>
-                    <label className="text-sm text-[#121212]/50 mb-1 block">
+                    <label htmlFor="send-x-handle" className="text-sm text-[#121212]/50 mb-1 block">
                       Enter X profile (without @)
                     </label>
                     <input
+                      id="send-x-handle"
                       type="text"
                       value={xHandle}
                       onChange={(e) =>
@@ -257,26 +264,26 @@ export function SendModal({
               </div>
 
               {/* Amount Details */}
-              <div className="space-y-2 mb-8">
+              <div className="space-y-2.5 mb-8">
                 <div className="flex justify-between">
                   <span className="text-[#121212]">Amount</span>
-                  <span className="text-[#121212]">
-                    {formatNumber(numAmount)} USDC
-                  </span>
+                  <span className="text-[#121212]">{formatNumber(numAmount)} USDC</span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-[#121212]">Partner Fees</span>
-                  <span className="text-[#121212]">
-                    ~{formatNumber(partnerFee)} USDC
-                  </span>
+                  <span className="text-[#121212]/70 text-sm">Network Fee</span>
+                  <span className="text-[#121212]/70 text-sm">~{formatNumber(baseFee)} USDC</span>
                 </div>
+                <div className="flex justify-between items-start">
+                  <div>
+                    <span className="text-[#121212]/70 text-sm">Privacy Routing</span>
+                    <p className="text-[#121212]/40 text-xs mt-0.5">Hides sender address</p>
+                  </div>
+                  <span className="text-[#121212]/70 text-sm">~{formatNumber(numAmount * feePercent)} USDC</span>
+                </div>
+                <div className="h-px bg-[#121212]/8" />
                 <div className="flex justify-between">
-                  <span className="text-[#121212] font-semibold">
-                    They Receive
-                  </span>
-                  <span className="text-[#121212] font-semibold">
-                    ~{formatNumber(total)} USDC
-                  </span>
+                  <span className="text-[#121212] font-semibold">They Receive</span>
+                  <span className="text-[#121212] font-semibold">~{formatNumber(total)} USDC</span>
                 </div>
               </div>
 
@@ -307,9 +314,10 @@ export function SendModal({
           {state === "loading" && (
             <motion.div
               key="loading"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
+              variants={scaleIn}
+              initial="hidden"
+              animate="visible"
+              exit="exit"
               className="flex flex-col items-center justify-center py-12"
             >
               <Spinner size={48} color="#121212" />
@@ -322,36 +330,42 @@ export function SendModal({
           {state === "success" && (
             <motion.div
               key="success"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
+              variants={scaleIn}
+              initial="hidden"
+              animate="visible"
+              exit="exit"
+              className="relative"
             >
+              <SuccessParticles />
               {/* Success Details */}
-              <div className="space-y-2 mb-8">
+              <div className="space-y-2.5 mb-4">
                 <div className="flex justify-between">
                   <span className="text-[#121212]">Sent To</span>
                   <span className="text-[#121212]">{displayRecipient}</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-[#121212]">Amount</span>
-                  <span className="text-[#121212]">
-                    {formatNumber(numAmount)} USDC
-                  </span>
+                  <span className="text-[#121212]">{formatNumber(numAmount)} USDC</span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-[#121212]">Partner Fees</span>
-                  <span className="text-[#121212]">
-                    ~{formatNumber(partnerFee)} USDC
-                  </span>
+                  <span className="text-[#121212]/70 text-sm">Fees</span>
+                  <span className="text-[#121212]/70 text-sm">~{formatNumber(partnerFee)} USDC</span>
                 </div>
+                <div className="h-px bg-[#121212]/8" />
                 <div className="flex justify-between">
-                  <span className="text-[#121212] font-semibold">
-                    They Receive
-                  </span>
-                  <span className="text-[#121212] font-semibold">
-                    ~{formatNumber(total)} USDC
-                  </span>
+                  <span className="text-[#121212] font-semibold">They Received</span>
+                  <span className="text-[#121212] font-semibold">~{formatNumber(total)} USDC</span>
                 </div>
+              </div>
+
+              {/* Privacy confirmation */}
+              <div className="flex items-center gap-2 px-3 py-2 rounded-xl bg-[#121212]/5 mb-4">
+                <svg width="12" height="14" viewBox="0 0 12 14" fill="none" aria-hidden="true">
+                  <path d="M6 0.5L0.5 2.75V6.5C0.5 9.7 2.9 12.7 6 13.5C9.1 12.7 11.5 9.7 11.5 6.5V2.75L6 0.5Z" fill="#121212" fillOpacity="0.5" />
+                </svg>
+                <p className="text-xs text-[#121212]/60">
+                  Sent privately — your wallet address was not revealed.
+                </p>
               </div>
 
               {/* Success Button */}
@@ -359,10 +373,11 @@ export function SendModal({
                 onClick={handleClose}
                 whileTap={{ scale: 0.98 }}
                 className="w-full h-10 bg-[#fafafa] border border-[#121212]/70 rounded-full flex items-center justify-center shadow-[0_4px_12px_rgba(18,18,18,0.15)]"
+                aria-label="Done"
               >
                 <Image
                   src="/assets/success-alt.svg"
-                  alt="Success"
+                  alt="Done"
                   width={24}
                   height={24}
                 />
@@ -373,9 +388,11 @@ export function SendModal({
           {state === "error" && (
             <motion.div
               key="error"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
+              role="alert"
+              variants={fadeUp}
+              initial="hidden"
+              animate="visible"
+              exit="exit"
               className="flex flex-col items-center justify-center py-8"
             >
               <div className="w-12 h-12 rounded-full bg-red-100 flex items-center justify-center mb-4">

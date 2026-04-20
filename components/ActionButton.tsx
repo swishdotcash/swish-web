@@ -1,3 +1,6 @@
+"use client";
+
+import { motion } from "motion/react";
 import Image from "next/image";
 
 interface ActionButtonProps {
@@ -6,17 +9,33 @@ interface ActionButtonProps {
   disabled?: boolean;
 }
 
+const LABELS: Record<ActionButtonProps["variant"], { text: string; icon: string }> = {
+  send:    { text: "Send",    icon: "/assets/send.svg"    },
+  receive: { text: "Receive", icon: "/assets/receive.svg" },
+};
+
 export function ActionButton({ variant, onClick, disabled }: ActionButtonProps) {
-  const icon = variant === "send" ? "/assets/send.svg" : "/assets/receive.svg";
-  const alt = variant === "send" ? "Send" : "Receive";
+  const { text, icon } = LABELS[variant];
 
   return (
-    <button
+    <motion.button
       onClick={onClick}
       disabled={disabled}
-      className="w-full h-10 bg-[#121212] rounded-full flex items-center justify-center hover:bg-[#121212]/90 active:scale-[0.98] transition-all disabled:opacity-40 disabled:cursor-not-allowed shadow-[0_4px_12px_rgba(18,18,18,0.15)]"
+      aria-label={text}
+      whileHover={
+        disabled
+          ? {}
+          : { scale: 1.03, transition: { type: "spring", damping: 20, stiffness: 400 } }
+      }
+      whileTap={
+        disabled
+          ? {}
+          : { scale: 0.95, transition: { type: "spring", damping: 18, stiffness: 500 } }
+      }
+      className="w-full h-11 bg-[#121212] rounded-full flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed shadow-[0_4px_12px_rgba(18,18,18,0.15)]"
     >
-      <Image src={icon} alt={alt} width={24} height={16} />
-    </button>
+      <Image src={icon} alt="" aria-hidden="true" width={20} height={14} />
+      <span className="text-[#fafafa] text-sm font-semibold">{text}</span>
+    </motion.button>
   );
 }

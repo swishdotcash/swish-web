@@ -34,10 +34,11 @@ export function useSOLBalance(walletAddress: string | null): UseSOLBalanceResult
       const connection = new Connection(rpcUrl, "confirmed");
       const pubkey = new PublicKey(walletAddress);
 
-      // Fetch SOL balance and price in parallel
+      // Fetch SOL balance and price in parallel — reuse shared fee cache
+      const { getCachedFee } = await import("@/hooks/useFee");
       const [lamports, feeRes] = await Promise.all([
         connection.getBalance(pubkey),
-        fetch("/api/fee").then((r) => r.json()).catch(() => null),
+        getCachedFee().catch(() => null),
       ]);
 
       const solBalance = lamports / LAMPORTS_PER_SOL;

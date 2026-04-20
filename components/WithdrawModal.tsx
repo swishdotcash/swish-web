@@ -122,11 +122,12 @@ export function WithdrawModal({
             >
               {/* Wallet Address Input */}
               <div className="mb-4">
-                <label className="text-sm text-[#121212]/50 mb-1 block">
+                <label htmlFor="withdraw-wallet-address" className="text-sm text-[#121212]/50 mb-1 block">
                   Destination wallet address
                 </label>
                 <div className="flex gap-2">
                   <input
+                    id="withdraw-wallet-address"
                     type="text"
                     value={walletAddress}
                     onChange={(e) => setWalletAddress(e.target.value)}
@@ -135,11 +136,13 @@ export function WithdrawModal({
                   />
                   <button
                     onClick={() => setShowQRScanner(true)}
+                    aria-label="Scan QR code"
                     className="w-12 h-12 rounded-full border border-[#121212]/10 flex items-center justify-center hover:bg-[#121212]/5 transition-colors shrink-0"
                   >
                     <Image
                       src="/assets/scan-icon.svg"
-                      alt="Scan QR"
+                      alt=""
+                      aria-hidden="true"
                       width={20}
                       height={20}
                     />
@@ -149,11 +152,12 @@ export function WithdrawModal({
 
               {/* Amount Input */}
               <div className="mb-6">
-                <label className="text-sm text-[#121212]/50 mb-1 block">
+                <label htmlFor="withdraw-amount" className="text-sm text-[#121212]/50 mb-1 block">
                   Amount (USDC)
                 </label>
                 <div className="flex gap-2">
                   <input
+                    id="withdraw-amount"
                     type="number"
                     value={amount}
                     onChange={(e) => setAmount(e.target.value)}
@@ -259,6 +263,7 @@ export function WithdrawModal({
           {state === "error" && (
             <motion.div
               key="error"
+              role="alert"
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}

@@ -96,10 +96,11 @@ export function ClaimPassphraseModal({
           >
             {/* Passphrase Input */}
             <div className="mb-6">
-              <label className="text-sm text-[#121212]/50 mb-1 block">
+              <label htmlFor="claim-passphrase" className="text-sm text-[#121212]/50 mb-1 block">
                 Enter passphrase
               </label>
               <input
+                id="claim-passphrase"
                 type="text"
                 value={passphrase}
                 onChange={(e) => setPassphrase(e.target.value)}
@@ -186,6 +187,7 @@ export function ClaimPassphraseModal({
         {state === "error" && (
           <motion.div
             key="error"
+            role="alert"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}

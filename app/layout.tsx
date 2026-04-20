@@ -4,8 +4,6 @@ import "./globals.css";
 import Providers from "./providers";
 import { Logo, Footer } from "@/components";
 
-// Force dynamic rendering for all pages - required for Privy auth
-export const dynamic = "force-dynamic";
 
 const jost = Jost({
   subsets: ["latin"],
