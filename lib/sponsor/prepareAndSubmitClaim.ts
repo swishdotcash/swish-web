@@ -380,6 +380,7 @@ export interface ClaimWithPassphraseParams {
   passphrase: string;
   receiverAddress: string;
   sponsorKeypair: Keypair;
+  providerId: string; // Stamped on the activity row at settlement
 }
 
 export interface ClaimWithPassphraseResult {
@@ -395,7 +396,7 @@ export interface ClaimWithPassphraseResult {
 export async function claimWithPassphrase(
   params: ClaimWithPassphraseParams
 ): Promise<ClaimWithPassphraseResult> {
-  const { connection, activityId, passphrase, receiverAddress, sponsorKeypair } = params;
+  const { connection, activityId, passphrase, receiverAddress, sponsorKeypair, providerId } = params;
 
   console.log("=== Claim with Passphrase ===");
   console.log("Activity:", activityId);
@@ -527,13 +528,11 @@ export async function claimWithPassphrase(
 
     console.log("Claim tx:", signature);
 
-    // Update activity — stamp provider_id at settle time. Hardcoded to
-    // "privacy-cash" here; PR 4 wraps this flow in the registry and threads
-    // the provider's own id through.
+    // Update activity — provider_id stamped by the actual settling protocol
     await updateActivityStatus(activity.id, "settled", {
       claim_tx_hash: signature,
       receiver_address: receiverAddress,
-      provider_id: "privacy-cash",
+      provider_id: providerId,
     });
 
     console.log("Activity updated: settled");
