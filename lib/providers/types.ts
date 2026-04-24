@@ -42,9 +42,47 @@ export interface SubmitSendResult {
   providerMetadata?: Record<string, unknown>;
 }
 
+export interface PrepareFulfillInput {
+  connection: Connection;
+  activityId: string;
+  payerPublicKey: PublicKey;
+  sessionSignature: Uint8Array;
+}
+
+export interface PrepareFulfillOutput {
+  activityId: string;
+  unsignedDepositTx: string;
+  lastValidBlockHeight: number;
+  estimatedFeeLamports: number;
+  estimatedFeeSOL: number;
+  amount: number;
+  token: TokenType;
+  receiverAddress: string;
+  providerContext?: Record<string, unknown>;
+}
+
+export interface SubmitFulfillInput {
+  connection: Connection;
+  signedDepositTx: string;
+  sessionSignature: Uint8Array;
+  activityId: string;
+  payerPublicKey: PublicKey;
+  lastValidBlockHeight?: number;
+  providerContext?: Record<string, unknown>;
+}
+
+export interface SubmitFulfillResult {
+  activityId: string;
+  depositTx: string;
+  withdrawTx: string;
+  providerMetadata?: Record<string, unknown>;
+}
+
 export interface PrivacySendProvider {
   id: ProviderId;
   displayName: string;
   prepare(input: PrepareSendInput): Promise<PrepareSendOutput>;
   submit(input: SubmitSendInput): Promise<SubmitSendResult>;
+  prepareFulfill(input: PrepareFulfillInput): Promise<PrepareFulfillOutput>;
+  submitFulfill(input: SubmitFulfillInput): Promise<SubmitFulfillResult>;
 }
