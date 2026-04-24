@@ -33,7 +33,9 @@ export interface Activity {
   tx_hash: string | null;
   created_at: number;
   updated_at: number;
-  provider_id: string;
+  // NULL while activity is open/processing/cancelled — set by the protocol
+  // that actually settles the activity.
+  provider_id: string | null;
 
   // send_claim-specific fields (optional, only for send_claim type)
   burner_address?: string | null;
@@ -57,18 +59,17 @@ function getSupabase() {
   return supabase;
 }
 
-// Create activity
+// Create activity. provider_id is NOT set here — it's stamped at settlement time
+// by whichever protocol actually moved the money.
 export async function createActivity(
-  activity: Omit<Activity, "id" | "created_at" | "updated_at" | "provider_id"> & {
-    provider_id?: string;
-  }
+  activity: Omit<Activity, "id" | "created_at" | "updated_at" | "provider_id">
 ): Promise<Activity> {
   const now = Date.now();
   const id = crypto.randomUUID();
 
   const record: Activity = {
     ...activity,
-    provider_id: activity.provider_id ?? "privacy-cash",
+    provider_id: null,
     id,
     created_at: now,
     updated_at: now,
@@ -110,7 +111,7 @@ export async function getActivity(id: string): Promise<Activity | null> {
 export async function updateActivityStatus(
   id: string,
   status: ActivityStatus,
-  updates?: Partial<Pick<Activity, "tx_hash" | "claim_tx_hash" | "receiver_address" | "sender_address">>
+  updates?: Partial<Pick<Activity, "tx_hash" | "claim_tx_hash" | "receiver_address" | "sender_address" | "provider_id">>
 ): Promise<void> {
   const { error } = await getSupabase()
     .from("activity")

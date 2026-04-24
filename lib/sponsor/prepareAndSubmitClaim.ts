@@ -527,10 +527,13 @@ export async function claimWithPassphrase(
 
     console.log("Claim tx:", signature);
 
-    // Update activity
+    // Update activity — stamp provider_id at settle time. Hardcoded to
+    // "privacy-cash" here; PR 4 wraps this flow in the registry and threads
+    // the provider's own id through.
     await updateActivityStatus(activity.id, "settled", {
       claim_tx_hash: signature,
       receiver_address: receiverAddress,
+      provider_id: "privacy-cash",
     });
 
     console.log("Activity updated: settled");

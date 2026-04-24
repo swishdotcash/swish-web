@@ -20,7 +20,6 @@ export const privacyCashProvider: PrivacySendProvider = {
       amount: input.amount,
       token: input.token,
       message: input.message,
-      providerId: this.id,
     });
 
     return {
@@ -43,6 +42,7 @@ export const privacyCashProvider: PrivacySendProvider = {
       amount: input.amount,
       token: input.token,
       lastValidBlockHeight: input.lastValidBlockHeight,
+      providerId: this.id,
     });
 
     return {

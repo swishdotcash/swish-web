@@ -309,9 +309,13 @@ export async function submitFulfill(
     console.log("Withdraw tx:", withdrawTx);
 
     // Update activity status and add sender_address
+    // provider_id stamped now that settlement happened. Hardcoded to "privacy-cash"
+    // here; once PR 3 wraps the fulfill flow in the registry, the provider will
+    // thread its own id through.
     await updateActivityStatus(activity.id, "settled", {
       tx_hash: withdrawTx,
       sender_address: payerPublicKey.toBase58(),
+      provider_id: "privacy-cash",
     });
 
     console.log("Activity updated: settled");

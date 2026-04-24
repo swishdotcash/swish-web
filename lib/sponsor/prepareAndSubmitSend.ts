@@ -54,7 +54,6 @@ export interface PrepareSendParams {
   amount: number;
   token: TokenType;
   message?: string;
-  providerId?: string;
 }
 
 export interface PrepareSendResult {
@@ -80,7 +79,6 @@ export async function prepareSend(
     amount,
     token,
     message,
-    providerId,
   } = params;
 
   const baseUnits = Math.floor(amount * 1_000_000);
@@ -101,7 +99,6 @@ export async function prepareSend(
     status: "open",
     message: message || null,
     tx_hash: null,
-    provider_id: providerId,
   });
   console.log("Activity created:", activity.id);
 
@@ -164,6 +161,7 @@ export interface SubmitSendParams {
   amount: number;
   token: TokenType;
   lastValidBlockHeight?: number; // Optional: for checking tx validity
+  providerId: string; // Stamped on the activity row at settlement
 }
 
 export interface SubmitSendResult {
@@ -215,6 +213,7 @@ export async function submitSend(
     amount,
     token,
     lastValidBlockHeight,
+    providerId,
   } = params;
 
   const baseUnits = Math.floor(amount * 1_000_000);
@@ -274,9 +273,10 @@ export async function submitSend(
     const withdrawTx = withdrawResult.tx;
     console.log("Withdraw tx:", withdrawTx);
 
-    // Update activity status
+    // Update activity status — stamp provider_id now that settlement has happened
     await updateActivityStatus(activityId, "settled", {
       tx_hash: withdrawTx,
+      provider_id: providerId,
     });
     console.log("Activity updated: settled");
 
