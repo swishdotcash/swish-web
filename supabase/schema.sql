@@ -19,8 +19,9 @@ CREATE TABLE activity (
   deposit_tx_hash TEXT,
   claim_tx_hash TEXT,
 
-  -- Privacy protocol that handled this activity (privacy-cash, magicblock-per, umbra)
-  provider_id TEXT NOT NULL DEFAULT 'privacy-cash'
+  -- Privacy protocol that actually settled this activity (privacy-cash, magicblock-per, umbra).
+  -- NULL while open/processing — stamped at settle time by whichever protocol moved the money.
+  provider_id TEXT
 );
 
 -- Indexes for common queries
