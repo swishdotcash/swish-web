@@ -2,9 +2,14 @@ import { NextRequest, NextResponse } from "next/server";
 import { Connection, PublicKey } from "@solana/web3.js";
 import nacl from "tweetnacl";
 
-import { prepareClaim } from "@/lib/sponsor/prepareAndSubmitClaim";
 import { SESSION_MESSAGE } from "@/lib/sponsor/prepareAndSubmitSend";
 import { TokenType } from "@/lib/privacycash/tokens";
+import {
+  DEFAULT_PROVIDER_ID,
+  getProvider,
+  isProviderId,
+  type ProviderId,
+} from "@/lib/providers";
 
 export async function POST(request: NextRequest) {
   try {
@@ -32,12 +37,25 @@ export async function POST(request: NextRequest) {
       amount,
       token,
       message,
+      providerId: providerIdInput,
     }: {
       senderPublicKey: string;
       amount: number;
       token: TokenType;
       message?: string;
+      providerId?: string;
     } = body;
+
+    let providerId: ProviderId = DEFAULT_PROVIDER_ID;
+    if (providerIdInput) {
+      if (!isProviderId(providerIdInput)) {
+        return NextResponse.json(
+          { error: `Unknown providerId: ${providerIdInput}` },
+          { status: 400 }
+        );
+      }
+      providerId = providerIdInput;
+    }
 
     // Validation
     if (!senderPublicKey || !amount || !token) {
@@ -82,8 +100,9 @@ export async function POST(request: NextRequest) {
     }
     const connection = new Connection(rpcUrl, "confirmed");
 
-    // Execute prepare - user pays their own gas fees
-    const result = await prepareClaim({
+    // Execute prepare via provider - user pays their own gas fees
+    const provider = getProvider(providerId);
+    const result = await provider.prepareSendClaim({
       connection,
       senderPublicKey: senderPubKey,
       sessionSignature: sessionSigBytes,
@@ -94,6 +113,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({
       ...result,
+      providerId,
       sessionMessage: SESSION_MESSAGE,
     });
   } catch (error: any) {

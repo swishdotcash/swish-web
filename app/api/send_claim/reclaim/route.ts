@@ -3,8 +3,13 @@ import { Connection, Keypair, PublicKey } from "@solana/web3.js";
 import bs58 from "bs58";
 import nacl from "tweetnacl";
 
-import { reclaimWithSignature } from "@/lib/sponsor/prepareAndSubmitClaim";
 import { SESSION_MESSAGE } from "@/lib/sponsor/prepareAndSubmitSend";
+import {
+  DEFAULT_PROVIDER_ID,
+  getProvider,
+  isProviderId,
+  type ProviderId,
+} from "@/lib/providers";
 
 export async function POST(request: NextRequest) {
   try {
@@ -30,10 +35,23 @@ export async function POST(request: NextRequest) {
     const {
       activityId,
       senderPublicKey,
+      providerId: providerIdInput,
     }: {
       activityId: string;
       senderPublicKey: string;
+      providerId?: string;
     } = body;
+
+    let providerId: ProviderId = DEFAULT_PROVIDER_ID;
+    if (providerIdInput) {
+      if (!isProviderId(providerIdInput)) {
+        return NextResponse.json(
+          { error: `Unknown providerId: ${providerIdInput}` },
+          { status: 400 }
+        );
+      }
+      providerId = providerIdInput;
+    }
 
     // Validation
     if (!activityId || !senderPublicKey) {
@@ -81,8 +99,9 @@ export async function POST(request: NextRequest) {
     }
     const connection = new Connection(rpcUrl, "confirmed");
 
-    // Execute reclaim
-    const result = await reclaimWithSignature({
+    // Execute reclaim via provider
+    const provider = getProvider(providerId);
+    const result = await provider.reclaim({
       connection,
       activityId,
       sessionSignature: sessionSigBytes,
@@ -90,7 +109,7 @@ export async function POST(request: NextRequest) {
       sponsorKeypair,
     });
 
-    return NextResponse.json(result);
+    return NextResponse.json({ ...result, providerId });
   } catch (error: any) {
     console.error("Reclaim error:", error);
 

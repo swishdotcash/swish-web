@@ -2,7 +2,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { Connection, Keypair } from "@solana/web3.js";
 import bs58 from "bs58";
 
-import { claimWithPassphrase } from "@/lib/sponsor/prepareAndSubmitClaim";
+import {
+  DEFAULT_PROVIDER_ID,
+  getProvider,
+  isProviderId,
+  type ProviderId,
+} from "@/lib/providers";
 
 export async function POST(request: NextRequest) {
   try {
@@ -12,11 +17,24 @@ export async function POST(request: NextRequest) {
       activityId,
       passphrase,
       receiverAddress,
+      providerId: providerIdInput,
     }: {
       activityId: string;
       passphrase: string;
       receiverAddress: string;
+      providerId?: string;
     } = body;
+
+    let providerId: ProviderId = DEFAULT_PROVIDER_ID;
+    if (providerIdInput) {
+      if (!isProviderId(providerIdInput)) {
+        return NextResponse.json(
+          { error: `Unknown providerId: ${providerIdInput}` },
+          { status: 400 }
+        );
+      }
+      providerId = providerIdInput;
+    }
 
     // Validation
     if (!activityId || !passphrase || !receiverAddress) {
@@ -46,8 +64,9 @@ export async function POST(request: NextRequest) {
     }
     const connection = new Connection(rpcUrl, "confirmed");
 
-    // Execute claim
-    const result = await claimWithPassphrase({
+    // Execute claim via provider
+    const provider = getProvider(providerId);
+    const result = await provider.claim({
       connection,
       activityId,
       passphrase,
@@ -55,7 +74,7 @@ export async function POST(request: NextRequest) {
       sponsorKeypair,
     });
 
-    return NextResponse.json(result);
+    return NextResponse.json({ ...result, providerId });
   } catch (error: any) {
     console.error("Claim error:", error);
 

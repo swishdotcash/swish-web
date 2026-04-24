@@ -2,8 +2,13 @@ import { NextRequest, NextResponse } from "next/server";
 import { Connection, PublicKey } from "@solana/web3.js";
 import nacl from "tweetnacl";
 
-import { submitClaim } from "@/lib/sponsor/prepareAndSubmitClaim";
 import { SESSION_MESSAGE } from "@/lib/sponsor/prepareAndSubmitSend";
+import {
+  DEFAULT_PROVIDER_ID,
+  getProvider,
+  isProviderId,
+  type ProviderId,
+} from "@/lib/providers";
 
 export async function POST(request: NextRequest) {
   try {
@@ -31,12 +36,27 @@ export async function POST(request: NextRequest) {
       activityId,
       senderPublicKey,
       lastValidBlockHeight,
+      providerId: providerIdInput,
+      providerContext,
     }: {
       signedDepositTx: string;
       activityId: string;
       senderPublicKey: string;
       lastValidBlockHeight?: number;
+      providerId?: string;
+      providerContext?: Record<string, unknown>;
     } = body;
+
+    let providerId: ProviderId = DEFAULT_PROVIDER_ID;
+    if (providerIdInput) {
+      if (!isProviderId(providerIdInput)) {
+        return NextResponse.json(
+          { error: `Unknown providerId: ${providerIdInput}` },
+          { status: 400 }
+        );
+      }
+      providerId = providerIdInput;
+    }
 
     // Validation
     if (!signedDepositTx || !activityId || !senderPublicKey) {
@@ -74,17 +94,19 @@ export async function POST(request: NextRequest) {
     }
     const connection = new Connection(rpcUrl, "confirmed");
 
-    // Execute submit - user already signed and paid their own gas
-    const result = await submitClaim({
+    // Execute submit via provider - user already signed and paid their own gas
+    const provider = getProvider(providerId);
+    const result = await provider.submitSendClaim({
       connection,
       signedDepositTx,
       sessionSignature: sessionSigBytes,
       activityId,
       senderPublicKey: senderPubKey,
       lastValidBlockHeight,
+      providerContext,
     });
 
-    return NextResponse.json(result);
+    return NextResponse.json({ ...result, providerId });
   } catch (error: any) {
     console.error("Submit claim link error:", error);
 
