@@ -54,6 +54,7 @@ export interface PrepareSendParams {
   amount: number;
   token: TokenType;
   message?: string;
+  providerId?: string;
 }
 
 export interface PrepareSendResult {
@@ -79,6 +80,7 @@ export async function prepareSend(
     amount,
     token,
     message,
+    providerId,
   } = params;
 
   const baseUnits = Math.floor(amount * 1_000_000);
@@ -99,6 +101,7 @@ export async function prepareSend(
     status: "open",
     message: message || null,
     tx_hash: null,
+    provider_id: providerId,
   });
   console.log("Activity created:", activity.id);
 

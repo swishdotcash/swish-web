@@ -33,6 +33,7 @@ export interface Activity {
   tx_hash: string | null;
   created_at: number;
   updated_at: number;
+  provider_id: string;
 
   // send_claim-specific fields (optional, only for send_claim type)
   burner_address?: string | null;
@@ -58,13 +59,16 @@ function getSupabase() {
 
 // Create activity
 export async function createActivity(
-  activity: Omit<Activity, "id" | "created_at" | "updated_at">
+  activity: Omit<Activity, "id" | "created_at" | "updated_at" | "provider_id"> & {
+    provider_id?: string;
+  }
 ): Promise<Activity> {
   const now = Date.now();
   const id = crypto.randomUUID();
 
   const record: Activity = {
     ...activity,
+    provider_id: activity.provider_id ?? "privacy-cash",
     id,
     created_at: now,
     updated_at: now,
