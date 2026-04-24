@@ -2,8 +2,14 @@ import { NextRequest, NextResponse } from "next/server";
 import { Connection, PublicKey } from "@solana/web3.js";
 import nacl from "tweetnacl";
 
-import { submitSend, SESSION_MESSAGE } from "@/lib/sponsor/prepareAndSubmitSend";
+import { SESSION_MESSAGE } from "@/lib/sponsor/prepareAndSubmitSend";
 import { TokenType } from "@/lib/privacycash/tokens";
+import {
+  DEFAULT_PROVIDER_ID,
+  getProvider,
+  isProviderId,
+  type ProviderId,
+} from "@/lib/providers";
 
 export async function POST(request: NextRequest) {
   try {
@@ -34,6 +40,8 @@ export async function POST(request: NextRequest) {
       amount,
       token,
       lastValidBlockHeight,
+      providerId: providerIdInput,
+      providerContext,
     }: {
       signedDepositTx: string;
       activityId: string;
@@ -42,7 +50,20 @@ export async function POST(request: NextRequest) {
       amount: number;
       token: TokenType;
       lastValidBlockHeight?: number;
+      providerId?: string;
+      providerContext?: Record<string, unknown>;
     } = body;
+
+    let providerId: ProviderId = DEFAULT_PROVIDER_ID;
+    if (providerIdInput) {
+      if (!isProviderId(providerIdInput)) {
+        return NextResponse.json(
+          { error: `Unknown providerId: ${providerIdInput}` },
+          { status: 400 }
+        );
+      }
+      providerId = providerIdInput;
+    }
 
     // Validation
     if (!signedDepositTx || !activityId || !senderPublicKey || !receiverAddress || !amount || !token) {
@@ -80,8 +101,9 @@ export async function POST(request: NextRequest) {
     }
     const connection = new Connection(rpcUrl, "confirmed");
 
-    // Execute submit - user already signed and paid their own gas
-    const result = await submitSend({
+    // Execute submit via provider - user already signed and paid their own gas
+    const provider = getProvider(providerId);
+    const result = await provider.submit({
       connection,
       signedDepositTx,
       sessionSignature: sessionSigBytes,
@@ -91,9 +113,10 @@ export async function POST(request: NextRequest) {
       amount,
       token,
       lastValidBlockHeight,
+      providerContext,
     });
 
-    return NextResponse.json(result);
+    return NextResponse.json({ ...result, providerId });
   } catch (error: any) {
     console.error("Submit send error:", error);
 
