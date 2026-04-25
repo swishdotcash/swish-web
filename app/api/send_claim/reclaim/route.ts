@@ -10,6 +10,7 @@ import {
   isProviderId,
   type ProviderId,
 } from "@/lib/providers";
+import { getActivity } from "@/lib/database";
 
 export async function POST(request: NextRequest) {
   try {
@@ -35,23 +36,10 @@ export async function POST(request: NextRequest) {
     const {
       activityId,
       senderPublicKey,
-      providerId: providerIdInput,
     }: {
       activityId: string;
       senderPublicKey: string;
-      providerId?: string;
     } = body;
-
-    let providerId: ProviderId = DEFAULT_PROVIDER_ID;
-    if (providerIdInput) {
-      if (!isProviderId(providerIdInput)) {
-        return NextResponse.json(
-          { error: `Unknown providerId: ${providerIdInput}` },
-          { status: 400 }
-        );
-      }
-      providerId = providerIdInput;
-    }
 
     // Validation
     if (!activityId || !senderPublicKey) {
@@ -60,6 +48,15 @@ export async function POST(request: NextRequest) {
         { status: 400 }
       );
     }
+
+    // provider_id is stamped on the row at prepare time; read it back to dispatch.
+    const activity = await getActivity(activityId);
+    if (!activity) {
+      return NextResponse.json({ error: "Claim link not found" }, { status: 404 });
+    }
+    const providerId: ProviderId = isProviderId(activity.provider_id ?? "")
+      ? (activity.provider_id as ProviderId)
+      : DEFAULT_PROVIDER_ID;
 
     // Parse inputs
     const senderPubKey = new PublicKey(senderPublicKey);
