@@ -120,6 +120,7 @@ export const privacyCashProvider: PrivacySendProvider = {
       amount: input.amount,
       token: input.token,
       message: input.message,
+      providerId: this.id,
     });
 
     return {

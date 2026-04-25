@@ -73,6 +73,11 @@ export interface PrepareClaimParams {
   amount: number;
   token: TokenType;
   message?: string;
+  // Stamped on the activity row at create time. The privacy work for
+  // send_claim happens here (deposit + withdraw to burner), so the row
+  // owns the provider id from the start — claim/reclaim read it back
+  // to dispatch.
+  providerId: string;
 }
 
 export interface PrepareClaimResult {
@@ -99,6 +104,7 @@ export async function prepareClaim(
     amount,
     token,
     message,
+    providerId,
   } = params;
 
   const baseUnits = Math.floor(amount * 1_000_000);
@@ -136,6 +142,7 @@ export async function prepareClaim(
     burner_address: burnerKeypair.publicKey.toBase58(),
     encrypted_for_receiver: encryptedForReceiver,
     encrypted_for_sender: encryptedForSender,
+    provider_id: providerId,
   });
   console.log("Activity created:", activity.id);
 

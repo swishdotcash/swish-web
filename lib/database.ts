@@ -59,17 +59,24 @@ function getSupabase() {
   return supabase;
 }
 
-// Create activity. provider_id is NOT set here — it's stamped at settlement time
-// by whichever protocol actually moved the money.
+// Create activity. provider_id is NOT set here for `send` / `request` —
+// it's stamped at settlement time by whichever protocol actually moved
+// the money. For `send_claim` the privacy work happens at create
+// (deposit + withdraw to burner), so callers may pass `provider_id`
+// here and it lives on the row from the start; this lets the
+// claim/reclaim routes dispatch to the right provider without trusting
+// a body param from a different user.
 export async function createActivity(
-  activity: Omit<Activity, "id" | "created_at" | "updated_at" | "provider_id">
+  activity: Omit<Activity, "id" | "created_at" | "updated_at" | "provider_id"> & {
+    provider_id?: string | null;
+  }
 ): Promise<Activity> {
   const now = Date.now();
   const id = crypto.randomUUID();
 
   const record: Activity = {
-    ...activity,
     provider_id: null,
+    ...activity,
     id,
     created_at: now,
     updated_at: now,
