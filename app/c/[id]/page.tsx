@@ -24,7 +24,7 @@ type PageState = "loading" | "ready" | "success" | "error" | "not_found" | "alre
 export default function ClaimPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const { login, authenticated } = usePrivy();
-  const { signature, address } = useSessionSignature();
+  const { walletAddress, getSignature } = useSessionSignature();
   const { baseFee, feePercent } = useFee();
   const [claimData, setClaimData] = useState<ClaimData | null>(null);
   const [pageState, setPageState] = useState<PageState>("loading");
@@ -32,11 +32,15 @@ export default function ClaimPage({ params }: { params: Promise<{ id: string }> 
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   useEffect(() => {
+    // If authenticated, wait for walletAddress so the isSender check is reliable.
+    // Privy's wallet list can briefly settle to null during auth — fetching without
+    // the wallet param in that window would race-overwrite a true isSender response.
+    if (authenticated && !walletAddress) return;
+
     async function fetchClaimData() {
       try {
-        // Pass wallet address if available to check if user is sender
-        const url = address
-          ? `/api/send_claim/${id}?wallet=${address}`
+        const url = walletAddress
+          ? `/api/send_claim/${id}?wallet=${walletAddress}`
           : `/api/send_claim/${id}`;
 
         const res = await fetch(url);
@@ -65,15 +69,14 @@ export default function ClaimPage({ params }: { params: Promise<{ id: string }> 
     }
 
     fetchClaimData();
-  }, [id, address]);
+  }, [id, walletAddress, authenticated]);
 
   const handleClaim = () => {
     if (!authenticated) {
       login();
       return;
     }
-    if (!address) {
-      // Session signature not ready yet
+    if (!walletAddress) {
       return;
     }
     setShowPassphraseModal(true);
@@ -89,7 +92,10 @@ export default function ClaimPage({ params }: { params: Promise<{ id: string }> 
       return;
     }
 
-    if (!signature || !address) {
+    const session = await getSignature();
+    if (!session) {
+      setErrorMessage("Signature required to continue");
+      setPageState("error");
       return;
     }
 
@@ -101,11 +107,11 @@ export default function ClaimPage({ params }: { params: Promise<{ id: string }> 
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "X-Session-Signature": signature,
+          "X-Session-Signature": session.signature,
         },
         body: JSON.stringify({
           activityId: id,
-          senderPublicKey: address,
+          senderPublicKey: session.address,
         }),
       });
 
@@ -272,13 +278,13 @@ export default function ClaimPage({ params }: { params: Promise<{ id: string }> 
       </main>
 
       {/* Passphrase Modal */}
-      {showPassphraseModal && claimData && address && (
+      {showPassphraseModal && claimData && walletAddress && (
         <ClaimPassphraseModal
           isOpen={showPassphraseModal}
           onClose={() => setShowPassphraseModal(false)}
           amount={claimData.amount}
           activityId={claimData.id}
-          receiverAddress={address}
+          receiverAddress={walletAddress}
           onSuccess={handleClaimSuccess}
         />
       )}

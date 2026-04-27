@@ -9,13 +9,13 @@ import { Spinner } from "./Spinner";
 import { QRScanner } from "./QRScanner";
 import { formatNumber } from "@/utils";
 import { useWithdrawTransaction } from "@/hooks/useWithdrawTransaction";
+import type { GetSessionSignature } from "@/hooks/useSessionSignature";
 
 interface WithdrawModalProps {
   isOpen: boolean;
   onClose: () => void;
   usdcBalance: number;
-  signature: string | null;
-  senderPublicKey: string | null;
+  getSignature: GetSessionSignature;
 }
 
 type ModalState = "input" | "loading" | "success" | "error";
@@ -24,8 +24,7 @@ export function WithdrawModal({
   isOpen,
   onClose,
   usdcBalance,
-  signature,
-  senderPublicKey,
+  getSignature,
 }: WithdrawModalProps) {
   const [walletAddress, setWalletAddress] = useState("");
   const [amount, setAmount] = useState("");
@@ -50,7 +49,14 @@ export function WithdrawModal({
   const canProceed = isValidAddress && isValidAmount;
 
   const handleProceed = async () => {
-    if (!canProceed || !signature || !senderPublicKey) return;
+    if (!canProceed) return;
+
+    const session = await getSignature();
+    if (!session) {
+      setErrorMessage("Signature required to continue");
+      setState("error");
+      return;
+    }
 
     setState("loading");
     setErrorMessage(null);
@@ -59,8 +65,8 @@ export function WithdrawModal({
       await withdraw({
         receiverAddress: walletAddress,
         amount: numAmount,
-        signature,
-        senderPublicKey,
+        signature: session.signature,
+        senderPublicKey: session.address,
       });
       setState("success");
     } catch (error: any) {

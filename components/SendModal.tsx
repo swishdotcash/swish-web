@@ -10,14 +10,14 @@ import { QRScanner } from "./QRScanner";
 import { formatNumber } from "@/utils";
 import { useSendTransaction } from "@/hooks/useSendTransaction";
 import { useFee } from "@/hooks/useFee";
+import type { GetSessionSignature } from "@/hooks/useSessionSignature";
 
 interface SendModalProps {
   isOpen: boolean;
   onClose: () => void;
   amount: string;
   onSendViaClaim: () => void;
-  signature: string | null;
-  senderPublicKey: string | null;
+  getSignature: GetSessionSignature;
 }
 
 type ModalState = "input" | "loading" | "success" | "error";
@@ -28,8 +28,7 @@ export function SendModal({
   onClose,
   amount,
   onSendViaClaim,
-  signature,
-  senderPublicKey,
+  getSignature,
 }: SendModalProps) {
   const [walletAddress, setWalletAddress] = useState("");
   const [xHandle, setXHandle] = useState("");
@@ -88,7 +87,14 @@ export function SendModal({
   };
 
   const handleProceed = async () => {
-    if (!canProceed || !signature || !senderPublicKey) return;
+    if (!canProceed) return;
+
+    const session = await getSignature();
+    if (!session) {
+      setErrorMessage("Signature required to continue");
+      setState("error");
+      return;
+    }
 
     setState("loading");
     setErrorMessage(null);
@@ -110,8 +116,8 @@ export function SendModal({
         receiverAddress,
         amount: numAmount,
         token: "USDC",
-        signature,
-        senderPublicKey,
+        signature: session.signature,
+        senderPublicKey: session.address,
       });
       setState("success");
     } catch (error: any) {

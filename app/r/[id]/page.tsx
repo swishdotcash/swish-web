@@ -39,7 +39,7 @@ export default function RequestPage({
   const { id } = use(params);
   const { login, authenticated } = usePrivy();
   const { wallets } = useWallets();
-  const { signature, address } = useSessionSignature();
+  const { walletAddress, getSignature } = useSessionSignature();
   const { baseFee, feePercent } = useFee();
   const [requestData, setRequestData] = useState<RequestData | null>(null);
   const [pageState, setPageState] = useState<PageState>("loading");
@@ -86,7 +86,14 @@ export default function RequestPage({
       return;
     }
 
-    if (!signature || !address || !requestData?.receiverAddress) {
+    if (!requestData?.receiverAddress) {
+      return;
+    }
+
+    const session = await getSignature();
+    if (!session) {
+      setErrorMessage("Signature required to continue");
+      setPageState("error");
       return;
     }
 
@@ -99,11 +106,11 @@ export default function RequestPage({
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "X-Session-Signature": signature,
+          "X-Session-Signature": session.signature,
         },
         body: JSON.stringify({
           activityId: id,
-          payerPublicKey: address,
+          payerPublicKey: session.address,
         }),
       });
 
@@ -136,12 +143,12 @@ export default function RequestPage({
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "X-Session-Signature": signature,
+          "X-Session-Signature": session.signature,
         },
         body: JSON.stringify({
           signedDepositTx,
           activityId: prepareResult.activityId,
-          payerPublicKey: address,
+          payerPublicKey: session.address,
           lastValidBlockHeight: prepareResult.lastValidBlockHeight,
         }),
       });
@@ -167,9 +174,9 @@ export default function RequestPage({
   // Check if current user is the requestor (owner of this request)
   const isRequestor =
     authenticated &&
-    address &&
+    walletAddress &&
     requestData?.receiverAddress &&
-    address.toLowerCase() === requestData.receiverAddress.toLowerCase();
+    walletAddress.toLowerCase() === requestData.receiverAddress.toLowerCase();
 
   const handleCancel = async () => {
     if (!authenticated) {
@@ -177,7 +184,10 @@ export default function RequestPage({
       return;
     }
 
-    if (!signature || !address) {
+    const session = await getSignature();
+    if (!session) {
+      setErrorMessage("Signature required to continue");
+      setPageState("error");
       return;
     }
 
@@ -189,11 +199,11 @@ export default function RequestPage({
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "X-Session-Signature": signature,
+          "X-Session-Signature": session.signature,
         },
         body: JSON.stringify({
           activityId: id,
-          requesterAddress: address,
+          requesterAddress: session.address,
         }),
       });
 

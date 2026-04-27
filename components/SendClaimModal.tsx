@@ -8,13 +8,13 @@ import { Spinner } from "./Spinner";
 import { formatNumber } from "@/utils";
 import { useSendClaimTransaction } from "@/hooks/useSendClaimTransaction";
 import { useFee } from "@/hooks/useFee";
+import type { GetSessionSignature } from "@/hooks/useSessionSignature";
 
 interface SendClaimModalProps {
   isOpen: boolean;
   onClose: () => void;
   amount: string;
-  signature: string | null;
-  senderPublicKey: string | null;
+  getSignature: GetSessionSignature;
 }
 
 type ModalState = "input" | "loading" | "success" | "error";
@@ -23,8 +23,7 @@ export function SendClaimModal({
   isOpen,
   onClose,
   amount,
-  signature,
-  senderPublicKey,
+  getSignature,
 }: SendClaimModalProps) {
   const [message, setMessage] = useState("");
   const [state, setState] = useState<ModalState>("input");
@@ -40,8 +39,9 @@ export function SendClaimModal({
   const total = numAmount - partnerFee;
 
   const handleProceed = async () => {
-    if (!signature || !senderPublicKey) {
-      setErrorMessage("No session signature. Please reconnect wallet.");
+    const session = await getSignature();
+    if (!session) {
+      setErrorMessage("Signature required to continue");
       setState("error");
       return;
     }
@@ -54,8 +54,8 @@ export function SendClaimModal({
         amount: numAmount,
         token: "USDC",
         message: message.trim() || undefined,
-        signature,
-        senderPublicKey,
+        signature: session.signature,
+        senderPublicKey: session.address,
       });
 
       setClaimLink(result.claimLink);
