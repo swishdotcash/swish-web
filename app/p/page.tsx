@@ -50,7 +50,7 @@ type TabType = "wallet" | "activity";
 export default function ProfilePage() {
   const { login, logout, authenticated, user } = usePrivy();
   const { exportWallet } = useExportWallet();
-  const { address, walletAddress, signature } = useSessionSignature();
+  const { walletAddress, getSignature } = useSessionSignature();
   const { balance: usdcBalance, isLoading: usdcLoading } =
     useUSDCBalance(walletAddress);
   const {
@@ -71,11 +71,11 @@ export default function ProfilePage() {
 
   useEffect(() => {
     async function fetchUserData() {
-      if (!address) return;
+      if (!walletAddress) return;
 
       setIsLoading(true);
       try {
-        const res = await fetch(`/api/activity/user?address=${address}`);
+        const res = await fetch(`/api/activity/user?address=${walletAddress}`);
         if (res.ok) {
           const data = await res.json();
           setUserData(data);
@@ -87,10 +87,10 @@ export default function ProfilePage() {
       }
     }
 
-    if (authenticated && address) {
+    if (authenticated && walletAddress) {
       fetchUserData();
     }
-  }, [authenticated, address]);
+  }, [authenticated, walletAddress]);
 
   const formatTimeAgo = (dateString: string) => {
     const date = new Date(dateString);
@@ -127,9 +127,9 @@ export default function ProfilePage() {
   };
 
   const handleCopyAddress = async () => {
-    if (!address) return;
+    if (!walletAddress) return;
     try {
-      await navigator.clipboard.writeText(address);
+      await navigator.clipboard.writeText(walletAddress);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {}
@@ -137,7 +137,7 @@ export default function ProfilePage() {
 
   const getActivityLabel = (activity: Activity) => {
     const isSender =
-      activity.sender_address?.toLowerCase() === address?.toLowerCase();
+      activity.sender_address?.toLowerCase() === walletAddress?.toLowerCase();
     switch (activity.type) {
       case "send":
         return isSender
@@ -149,7 +149,7 @@ export default function ProfilePage() {
           : `Claimed ${formatNumber(activity.amount)} USDC`;
       case "request":
         if (
-          activity.receiver_address?.toLowerCase() === address?.toLowerCase()
+          activity.receiver_address?.toLowerCase() === walletAddress?.toLowerCase()
         ) {
           return `Requested ${formatNumber(activity.amount)} USDC`;
         }
@@ -161,12 +161,12 @@ export default function ProfilePage() {
 
   const getActivityIcon = (activity: Activity) => {
     const isSender =
-      activity.sender_address?.toLowerCase() === address?.toLowerCase();
+      activity.sender_address?.toLowerCase() === walletAddress?.toLowerCase();
     if (activity.type === "send" || activity.type === "send_claim") {
       return isSender ? "/assets/send.svg" : "/assets/receive.svg";
     }
     if (activity.type === "request") {
-      if (activity.receiver_address?.toLowerCase() === address?.toLowerCase()) {
+      if (activity.receiver_address?.toLowerCase() === walletAddress?.toLowerCase()) {
         return "/assets/receive.svg";
       }
       return "/assets/send.svg";
@@ -256,7 +256,7 @@ export default function ProfilePage() {
         <div className="w-full max-w-[320px] mb-6">
           <div className="flex items-center justify-between gap-2 w-full">
             <span className="text-[#121212] font-medium text-lg">
-              {address ? formatAddr(address) : ""}
+              {walletAddress ? formatAddr(walletAddress) : ""}
             </span>
             <div className="flex items-center gap-2">
               <button
@@ -456,7 +456,7 @@ export default function ProfilePage() {
                 </motion.button>
                 {isXUser && (
                   <motion.button
-                    onClick={() => exportWallet({ address: address || "" })}
+                    onClick={() => exportWallet({ address: walletAddress || "" })}
                     whileTap={{ scale: 0.98 }}
                     className="flex-1 h-10 border border-[#121212]/20 rounded-full flex items-center justify-center text-[#121212] font-semibold hover:bg-[#121212]/5 transition-colors shadow-[0_4px_12px_rgba(18,18,18,0.15)]"
                   >
@@ -492,22 +492,21 @@ export default function ProfilePage() {
       </main>
 
       {/* Add Funds Modal */}
-      {showAddFunds && address && (
+      {showAddFunds && walletAddress && (
         <AddFundsModal
           isOpen={showAddFunds}
           onClose={() => setShowAddFunds(false)}
-          walletAddress={address}
+          walletAddress={walletAddress}
         />
       )}
 
       {/* Withdraw Modal */}
-      {showWithdraw && address && (
+      {showWithdraw && walletAddress && (
         <WithdrawModal
           isOpen={showWithdraw}
           onClose={() => setShowWithdraw(false)}
           usdcBalance={usdcBalance || 0}
-          signature={signature}
-          senderPublicKey={address}
+          getSignature={getSignature}
         />
       )}
     </>

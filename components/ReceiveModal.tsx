@@ -7,13 +7,13 @@ import { Modal } from "./Modal";
 import { Spinner } from "./Spinner";
 import { formatNumber } from "@/utils";
 import { useFee } from "@/hooks/useFee";
+import type { GetSessionSignature } from "@/hooks/useSessionSignature";
 
 interface ReceiveModalProps {
   isOpen: boolean;
   onClose: () => void;
   amount: string;
-  signature: string | null;
-  requesterAddress: string | null;
+  getSignature: GetSessionSignature;
 }
 
 type ModalState = "input" | "loading" | "success" | "error";
@@ -22,8 +22,7 @@ export function ReceiveModal({
   isOpen,
   onClose,
   amount,
-  signature,
-  requesterAddress,
+  getSignature,
 }: ReceiveModalProps) {
   const [message, setMessage] = useState("");
   const [state, setState] = useState<ModalState>("input");
@@ -37,8 +36,9 @@ export function ReceiveModal({
   const youReceive = numAmount - partnerFee;
 
   const handleProceed = async () => {
-    if (!signature || !requesterAddress) {
-      setErrorMessage("Please connect your wallet first");
+    const session = await getSignature();
+    if (!session) {
+      setErrorMessage("Signature required to continue");
       setState("error");
       return;
     }
@@ -51,10 +51,10 @@ export function ReceiveModal({
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "X-Session-Signature": signature,
+          "X-Session-Signature": session.signature,
         },
         body: JSON.stringify({
-          requesterAddress,
+          requesterAddress: session.address,
           amount: numAmount,
           token: "USDC",
           message: message.trim() || undefined,
