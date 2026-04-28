@@ -1,9 +1,10 @@
+import { magicBlockProvider } from "./magicBlockProvider";
 import { privacyCashProvider } from "./privacyCashProvider";
 import type { PrivacySendProvider, ProviderId } from "./types";
 
 const providers: Record<ProviderId, PrivacySendProvider | undefined> = {
   "privacy-cash": privacyCashProvider,
-  "magicblock-per": undefined,
+  "magicblock-per": magicBlockProvider,
   "umbra": undefined,
 };
 
