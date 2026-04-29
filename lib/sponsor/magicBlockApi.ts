@@ -1,12 +1,11 @@
 /**
  * Thin REST client for MagicBlock Private Payments API.
  *
- * Surface used by Swish: /transfer (private USDC routes through the
- * validator's TEE, settling base→base from sender's mainnet ATA to
- * receiver's mainnet ATA).
- *
- * /deposit and /withdraw are not used for the base→base flows in
- * PR 5a — added here only as types in case PR 5b needs them.
+ * Surface used by Swish:
+ * - /transfer — private USDC route through the validator's TEE. All Swish
+ *   flows pass `toBalance: "base"`, so the recipient lands in their mainnet
+ *   ATA (no ephemeral hold step). The /withdraw endpoint is unused for v1
+ *   while we stay base→base.
  */
 
 const DEFAULT_BASE_URL = "https://payments.magicblock.app";
