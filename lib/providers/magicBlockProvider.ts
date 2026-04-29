@@ -1,16 +1,16 @@
 /**
- * MagicBlock provider — base→base everywhere (PR 5a).
+ * MagicBlock provider.
  *
- * Send / Request fulfill / Send & Claim sender-create all use a single
- * MagicBlock /transfer call (visibility:"private", from/toBalance:"base")
- * which routes the SPL token through the validator's TEE and lands it
- * in the recipient's mainnet ATA. The user signs one tx and pays own gas
- * (same UX surface as the PC deposit step).
+ * All flows route base→base via MB's privately-routed transfer (TEE-vault
+ * anonymity-set privacy). Recipient always lands in their mainnet ATA, no
+ * unlock step required. UX-equivalent to Privacy Cash from the user's POV.
  *
- * For Send & Claim, the burner ends with USDC in its mainnet ATA after
- * the privacy hop. Claim and reclaim then reuse PC's existing
- * sponsor-paid SPL transfer code verbatim — this is the "hybrid burner"
- * pattern decided 2026-04-25.
+ * The base→ephemeral upgrade for direct Send / Request was prototyped
+ * (2026-04-29 PR 5b) and reverted: it required recipients to pay SOL gas
+ * to unlock, which Twitter-login Privy embedded wallets typically don't
+ * have. Marginal timing-decoupling privacy gain not worth the UX cost at
+ * v1 volumes. Revisit if MB ships sponsor co-signing for ephemeral
+ * withdrawals.
  */
 
 import {
