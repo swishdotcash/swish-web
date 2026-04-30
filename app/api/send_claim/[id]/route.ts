@@ -44,6 +44,7 @@ export async function GET(
       message: activity.message,
       createdAt: activity.created_at,
       isSender,
+      providerId: activity.provider_id,
       // Don't expose sender_address, burner_address, or encrypted data
     });
   } catch (error: any) {

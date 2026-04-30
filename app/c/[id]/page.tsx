@@ -8,6 +8,11 @@ import { formatNumber } from "@/utils";
 import { Spinner, ClaimPassphraseModal } from "@/components";
 import { useSessionSignature } from "@/hooks/useSessionSignature";
 import { useFee } from "@/hooks/useFee";
+import {
+  DEFAULT_PROVIDER_ID,
+  isProviderId,
+  type ProviderId,
+} from "@/lib/providers";
 
 interface ClaimData {
   id: string;
@@ -17,6 +22,7 @@ interface ClaimData {
   message: string | null;
   createdAt: string;
   isSender: boolean;
+  providerId: string | null;
 }
 
 type PageState = "loading" | "ready" | "success" | "error" | "not_found" | "already_claimed" | "reclaiming" | "reclaimed";
@@ -24,9 +30,17 @@ type PageState = "loading" | "ready" | "success" | "error" | "not_found" | "alre
 export default function ClaimPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const { login, authenticated } = usePrivy();
-  const { walletAddress, getSignature } = useSessionSignature();
   const { baseFee, feePercent } = useFee();
   const [claimData, setClaimData] = useState<ClaimData | null>(null);
+
+  // Pick the session-sig hook variant matching the row's provider so the
+  // wallet popup shows the protocol-matching message text. Defaults to PC
+  // until claim data loads.
+  const reclaimProvider: ProviderId =
+    claimData?.providerId && isProviderId(claimData.providerId)
+      ? (claimData.providerId as ProviderId)
+      : DEFAULT_PROVIDER_ID;
+  const { walletAddress, getSignature } = useSessionSignature(reclaimProvider);
   const [pageState, setPageState] = useState<PageState>("loading");
   const [showPassphraseModal, setShowPassphraseModal] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);

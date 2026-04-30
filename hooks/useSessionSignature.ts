@@ -5,6 +5,11 @@ import { useSignMessage, useWallets } from "@privy-io/react-auth/solana";
 import { useCallback, useEffect, useState } from "react";
 
 import type { ProviderId } from "@/lib/providers/types";
+import {
+  PC_SESSION_MESSAGE,
+  MB_SESSION_MESSAGE,
+  UMBRA_SESSION_MESSAGE,
+} from "@/lib/session-messages";
 
 // Per-protocol session message + sessionStorage keys.
 // Each protocol that needs sender-side burner reclaim ciphertext encryption
@@ -12,17 +17,17 @@ import type { ProviderId } from "@/lib/providers/types";
 // sig for PC-protocol UTXO encryption (legacy).
 const SESSION_CONFIGS = {
   "privacy-cash": {
-    message: "Privacy Money account sign in",
+    message: PC_SESSION_MESSAGE,
     signatureKey: "pc_session_signature",
     addressKey: "pc_session_address",
   },
   "magicblock-per": {
-    message: "Magic Block Swish sign in",
+    message: MB_SESSION_MESSAGE,
     signatureKey: "mb_session_signature",
     addressKey: "mb_session_address",
   },
   umbra: {
-    message: "Umbra Privacy Swish sign in",
+    message: UMBRA_SESSION_MESSAGE,
     signatureKey: "umbra_session_signature",
     addressKey: "umbra_session_address",
   },
@@ -30,16 +35,6 @@ const SESSION_CONFIGS = {
   ProviderId,
   { message: string; signatureKey: string; addressKey: string }
 >;
-
-// Public exports of the messages so backend routes can verify the sig
-// against the right message based on the activity row's provider_id.
-export const PC_SESSION_MESSAGE = SESSION_CONFIGS["privacy-cash"].message;
-export const MB_SESSION_MESSAGE = SESSION_CONFIGS["magicblock-per"].message;
-export const UMBRA_SESSION_MESSAGE = SESSION_CONFIGS.umbra.message;
-
-export function getSessionMessageForProvider(provider: ProviderId): string {
-  return SESSION_CONFIGS[provider].message;
-}
 
 interface SessionSignatureState {
   signature: string | null;
@@ -228,5 +223,7 @@ export function useSessionSignature(provider: ProviderId = "privacy-cash") {
 }
 
 // Backward-compat export for callers that import the PC message text directly.
-// New code should use `getSessionMessageForProvider(providerId)` instead.
+// New code should use `getSessionMessageForProvider(providerId)` from
+// `@/lib/session-messages` instead.
+export { PC_SESSION_MESSAGE, MB_SESSION_MESSAGE, UMBRA_SESSION_MESSAGE };
 export const SESSION_MESSAGE_TEXT = PC_SESSION_MESSAGE;
