@@ -12,7 +12,7 @@ import {
   DEFAULT_PROVIDER_ID,
   isProviderId,
   type ProviderId,
-} from "@/lib/providers";
+} from "@/lib/providers/types";
 
 interface ClaimData {
   id: string;

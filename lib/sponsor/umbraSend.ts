@@ -30,7 +30,6 @@ import {
   encryptBurnerForServer,
   ensureBurnerSol,
   isAddressRegisteredOnUmbra,
-  registerBurnerOnUmbra,
   submitSenderToBurnerTransfer,
   sweepBurnerSol,
 } from "./umbraBurner";
@@ -227,15 +226,18 @@ export async function submitUmbraSend(
       params.lastValidBlockHeight ?? 0
     );
 
-    // Step 2: Ensure burner has SOL for registration + deposit txs.
+    // Step 2: Ensure burner has SOL for the deposit txs.
     await ensureBurnerSol(connection, burnerKeypair.publicKey);
 
-    // Step 3: Register burner on Umbra (idempotent — no-op if already
-    // registered). Fresh burners always need this.
-    await registerBurnerOnUmbra(burnerKeypair);
-
-    // Step 4: Burner deposits USDC into Umbra pool with UTXO locked to
+    // Step 3: Burner deposits USDC into Umbra pool with UTXO locked to
     // recipient's commitment. Burner pays SOL fees from the budget.
+    //
+    // NOTE: burner does NOT register on Umbra. Per the protocol, the
+    // depositor (sender) does not need an EncryptedUserAccount PDA —
+    // the on-chain program only verifies the RECEIVER's registered
+    // commitment. Skipping registration:
+    //   - Saves ~0.047 SOL per send (otherwise locked in PDA rent forever)
+    //   - Eliminates one ZK prover step (faster, more reliable)
     const deposit = await depositToReceiverClaimable(
       burnerKeypair,
       BigInt(Math.floor(params.amount * 10 ** TOKEN_DECIMALS[params.token])),
@@ -428,7 +430,8 @@ export async function submitUmbraFulfill(
     );
 
     await ensureBurnerSol(connection, burnerKeypair.publicKey);
-    await registerBurnerOnUmbra(burnerKeypair);
+    // No registration — sender doesn't need an EncryptedUserAccount PDA
+    // for receiver-claimable deposits. See note in submitUmbraSend.
     const deposit = await depositToReceiverClaimable(
       burnerKeypair,
       toBaseUnits(activity.amount, token),

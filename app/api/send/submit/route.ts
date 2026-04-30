@@ -10,6 +10,7 @@ import {
   isProviderId,
   type ProviderId,
 } from "@/lib/providers";
+import { getActivity } from "@/lib/database";
 
 export async function POST(request: NextRequest) {
   try {
@@ -54,8 +55,26 @@ export async function POST(request: NextRequest) {
       providerContext?: Record<string, unknown>;
     } = body;
 
+    // Validation
+    if (!signedDepositTx || !activityId || !senderPublicKey || !receiverAddress || !amount || !token) {
+      return NextResponse.json(
+        { error: "Missing required fields" },
+        { status: 400 }
+      );
+    }
+
+    // Resolve provider from the activity row first — prepare may have
+    // stamped it at create (Umbra burner pattern). Fall back to body's
+    // providerId or default for legacy/PC flows that stamp at settle.
+    const activity = await getActivity(activityId);
+    if (!activity) {
+      return NextResponse.json({ error: "Activity not found" }, { status: 404 });
+    }
+
     let providerId: ProviderId = DEFAULT_PROVIDER_ID;
-    if (providerIdInput) {
+    if (activity.provider_id && isProviderId(activity.provider_id)) {
+      providerId = activity.provider_id;
+    } else if (providerIdInput) {
       if (!isProviderId(providerIdInput)) {
         return NextResponse.json(
           { error: `Unknown providerId: ${providerIdInput}` },
@@ -63,14 +82,6 @@ export async function POST(request: NextRequest) {
         );
       }
       providerId = providerIdInput;
-    }
-
-    // Validation
-    if (!signedDepositTx || !activityId || !senderPublicKey || !receiverAddress || !amount || !token) {
-      return NextResponse.json(
-        { error: "Missing required fields" },
-        { status: 400 }
-      );
     }
 
     // Parse inputs
