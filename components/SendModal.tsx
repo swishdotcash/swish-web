@@ -22,6 +22,7 @@ interface SendModalProps {
 
 type ModalState = "input" | "loading" | "success" | "error";
 type RecipientType = "wallet" | "x";
+type ProviderChoice = "auto" | "privacy-cash" | "umbra";
 
 export function SendModal({
   isOpen,
@@ -33,6 +34,7 @@ export function SendModal({
   const [walletAddress, setWalletAddress] = useState("");
   const [xHandle, setXHandle] = useState("");
   const [recipientType, setRecipientType] = useState<RecipientType>("wallet");
+  const [provider, setProvider] = useState<ProviderChoice>("auto");
   const [state, setState] = useState<ModalState>("input");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [showQRScanner, setShowQRScanner] = useState(false);
@@ -118,6 +120,7 @@ export function SendModal({
         token: "USDC",
         signature: session.signature,
         senderPublicKey: session.address,
+        providerId: provider === "auto" ? undefined : provider,
       });
       setState("success");
     } catch (error: any) {
@@ -132,6 +135,7 @@ export function SendModal({
     setWalletAddress("");
     setXHandle("");
     setRecipientType("wallet");
+    setProvider("auto");
     setErrorMessage(null);
     setIsResolvingX(false);
     onClose();
@@ -259,6 +263,40 @@ export function SendModal({
                       className="w-full h-12 px-4 rounded-full border border-[#121212]/10 bg-transparent text-[#121212] outline-none focus:border-[#121212]/30 transition-colors"
                     />
                   </>
+                )}
+              </div>
+
+              {/* Privacy provider picker (compact) */}
+              <div className="mb-6">
+                <label className="text-sm text-[#121212]/50 mb-1 block">
+                  Privacy protocol
+                </label>
+                <div className="flex gap-1.5">
+                  {(["auto", "privacy-cash", "umbra"] as ProviderChoice[]).map(
+                    (p) => (
+                      <button
+                        key={p}
+                        onClick={() => setProvider(p)}
+                        className={`flex-1 h-9 rounded-full text-xs font-medium transition-all ${
+                          provider === p
+                            ? "bg-[#121212] text-[#fafafa]"
+                            : "bg-[#121212]/5 text-[#121212]/70 hover:bg-[#121212]/10"
+                        }`}
+                      >
+                        {p === "auto"
+                          ? "Auto"
+                          : p === "privacy-cash"
+                            ? "Privacy Cash"
+                            : "Umbra"}
+                      </button>
+                    )
+                  )}
+                </div>
+                {provider === "umbra" && (
+                  <p className="text-xs text-[#121212]/50 mt-2">
+                    Recipient must be registered on Umbra. The send will fail
+                    cleanly if they aren&apos;t.
+                  </p>
                 )}
               </div>
 

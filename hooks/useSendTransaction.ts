@@ -24,6 +24,7 @@ interface SendParams {
   message?: string;
   signature: string;
   senderPublicKey: string;
+  providerId?: string;
 }
 
 interface UseSendTransactionResult {
@@ -87,6 +88,7 @@ export function useSendTransaction(): UseSendTransactionResult {
             amount: params.amount,
             token: params.token || "USDC",
             message: params.message,
+            providerId: params.providerId,
           }),
         });
 
