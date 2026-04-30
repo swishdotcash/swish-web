@@ -17,6 +17,7 @@ import { useState } from "react";
 import { Keypair } from "@solana/web3.js";
 import { useUmbraSend } from "@/hooks/useUmbraSend";
 import { useUmbraRegister } from "@/hooks/useUmbraRegister";
+import { useUmbraStatus } from "@/hooks/useUmbraStatus";
 
 interface StageResult {
   stage: string;
@@ -145,6 +146,13 @@ export default function UmbraSmokeTestPage() {
     }
   };
 
+  // === Umbra registration status (live) ===
+  const {
+    status: umbraStatus,
+    address: walletAddress,
+    refetch: refetchStatus,
+  } = useUmbraStatus();
+
   // === Umbra registration ===
   const { register, state: registerState } = useUmbraRegister();
 
@@ -245,18 +253,66 @@ export default function UmbraSmokeTestPage() {
             for tx fees + PDA rent (~0.005-0.01 SOL).
           </p>
 
+          {/* Live registration status pill */}
+          <div className="mb-4 flex items-center gap-2 text-sm">
+            <span className="text-[#121212]/50">Wallet:</span>
+            <span className="font-mono text-xs text-[#121212]">
+              {walletAddress
+                ? `${walletAddress.slice(0, 8)}...${walletAddress.slice(-4)}`
+                : "(not connected)"}
+            </span>
+            <span
+              className={`ml-2 px-2 py-0.5 rounded-full text-xs font-medium ${
+                umbraStatus === "registered"
+                  ? "bg-green-100 text-green-800"
+                  : umbraStatus === "unregistered"
+                    ? "bg-yellow-100 text-yellow-800"
+                    : umbraStatus === "loading"
+                      ? "bg-[#121212]/5 text-[#121212]/60"
+                      : "bg-red-100 text-red-800"
+              }`}
+            >
+              {umbraStatus === "registered"
+                ? "Registered ✓"
+                : umbraStatus === "unregistered"
+                  ? "Not registered"
+                  : umbraStatus === "loading"
+                    ? "Checking…"
+                    : umbraStatus === "no-wallet"
+                      ? "No wallet"
+                      : "Status check failed"}
+            </span>
+            <button
+              onClick={() => refetchStatus()}
+              className="text-xs text-[#121212]/50 underline ml-1"
+            >
+              re-check
+            </button>
+          </div>
+
           <button
-            onClick={() => register().catch(() => {})}
+            onClick={async () => {
+              try {
+                await register();
+              } catch {
+                // hook surfaces error
+              } finally {
+                refetchStatus();
+              }
+            }}
             disabled={
               registerState.stage === "checking" ||
-              registerState.stage === "registering"
+              registerState.stage === "registering" ||
+              umbraStatus === "registered"
             }
             className="h-10 px-6 rounded-full bg-[#121212] text-[#fafafa] font-medium disabled:opacity-50 mb-4"
           >
-            {registerState.stage === "checking" ||
-            registerState.stage === "registering"
-              ? `Working… (${registerState.stage})`
-              : "Register me on Umbra"}
+            {umbraStatus === "registered"
+              ? "Already registered"
+              : registerState.stage === "checking" ||
+                  registerState.stage === "registering"
+                ? `Working… (${registerState.stage})`
+                : "Register me on Umbra"}
           </button>
 
           <div className="text-sm text-[#121212]/70 mb-2">
