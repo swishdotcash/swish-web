@@ -118,7 +118,20 @@ export async function getActivity(id: string): Promise<Activity | null> {
 export async function updateActivityStatus(
   id: string,
   status: ActivityStatus,
-  updates?: Partial<Pick<Activity, "tx_hash" | "claim_tx_hash" | "receiver_address" | "sender_address" | "provider_id">>
+  updates?: Partial<
+    Pick<
+      Activity,
+      | "tx_hash"
+      | "claim_tx_hash"
+      | "receiver_address"
+      | "sender_address"
+      | "provider_id"
+      | "burner_address"
+      | "encrypted_for_sender"
+      | "encrypted_for_receiver"
+      | "deposit_tx_hash"
+    >
+  >
 ): Promise<void> {
   const { error } = await getSupabase()
     .from("activity")
