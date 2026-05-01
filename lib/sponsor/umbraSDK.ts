@@ -36,7 +36,7 @@ import {
 } from "@umbra-privacy/web-zk-prover";
 
 const UMBRA_NETWORK: Network = "mainnet";
-const UMBRA_INDEXER = "https://indexer.umbraprivacy.com";
+const UMBRA_INDEXER = "https://utxo-indexer.api.umbraprivacy.com";
 
 function getRpcUrl(): string {
   const url = process.env.RPC_URL;

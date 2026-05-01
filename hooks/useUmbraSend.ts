@@ -106,14 +106,22 @@ export function useUmbraSend() {
 
         const client = await getBrowserUmbraClient({ signer, rpcUrl });
 
-        // Stage: pre-flight check that recipient is registered on Umbra.
-        // Fail fast with a clear error before triggering any wallet prompts.
+        // Stage: pre-flight check that recipient is FULLY registered on
+        // Umbra (PDA exists + x25519 pubkey set + commitment set). Half-
+        // registered recipients would pass `state === "exists"` but the
+        // on-chain deposit would fail because the circuit verifies the
+        // recipient's commitment. Match the server-side check in
+        // isAddressRegisteredOnUmbra.
         reset({ stage: "checking-recipient", detail: params.receiverAddress });
         const query = getUserAccountQuerierFunction({ client });
         const recipientState = await query(params.receiverAddress as any);
-        if (recipientState.state !== "exists") {
+        const recipientData = (recipientState as any).data;
+        const recipientFullyRegistered =
+          recipientState.state === "exists" &&
+          Boolean(recipientData?.x25519PublicKey && recipientData?.userCommitment);
+        if (!recipientFullyRegistered) {
           throw new Error(
-            "Recipient is not registered on Umbra. Switch to Privacy Cash or MagicBlock, or ask the recipient to enable Umbra in their profile."
+            "Recipient is not fully registered on Umbra. Switch to Privacy Cash or MagicBlock, or ask the recipient to finish enabling Umbra in their profile."
           );
         }
 

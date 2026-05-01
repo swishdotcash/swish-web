@@ -222,10 +222,20 @@ export async function registerBurnerOnUmbra(
 }
 
 /**
- * Pre-flight check: is the given address registered on Umbra? Pure read,
- * no signature, no on-chain action. Used by router rule 2 (gate Umbra in
- * the picker if recipient unregistered) and the profile toggle (preset
- * state if user is already registered).
+ * Pre-flight check: is the given address FULLY registered on Umbra?
+ *
+ * "Fully registered" requires all 3 registration steps to have landed:
+ *   1. InitialiseEncryptedUserAccount (creates the PDA → makes state="exists")
+ *   2. RegisterTokenPublicKey (sets x25519PublicKey)
+ *   3. RegisterUserForAnonymousUsageV11 (sets userCommitment after Arcium MPC callback)
+ *
+ * Checking only `state === "exists"` is too lenient: a wallet that did
+ * step 1 but ran out of SOL before step 3 would falsely register as
+ * "registered" and the picker would let them try to send, only for the
+ * deposit to fail mid-flight.
+ *
+ * Matches the deeper check in `useUmbraRegister` so client and server
+ * agree on what "registered" means.
  */
 export async function isAddressRegisteredOnUmbra(
   address: string
@@ -237,7 +247,9 @@ export async function isAddressRegisteredOnUmbra(
   const client = await getServerUmbraClient({ signer });
   const query = getUserAccountQuerierFunction({ client });
   const result = await query(address as any);
-  return result.state === "exists";
+  if (result.state !== "exists") return false;
+  const data = (result as any).data;
+  return Boolean(data?.x25519PublicKey && data?.userCommitment);
 }
 
 /**

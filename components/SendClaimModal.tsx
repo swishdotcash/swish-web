@@ -8,7 +8,11 @@ import { Spinner } from "./Spinner";
 import { formatNumber } from "@/utils";
 import { useSendClaimTransaction } from "@/hooks/useSendClaimTransaction";
 import { useFee } from "@/hooks/useFee";
-import type { GetSessionSignature } from "@/hooks/useSessionSignature";
+import { useUmbraStatus } from "@/hooks/useUmbraStatus";
+import {
+  useSessionSignature,
+  type GetSessionSignature,
+} from "@/hooks/useSessionSignature";
 
 interface SendClaimModalProps {
   isOpen: boolean;
@@ -18,6 +22,7 @@ interface SendClaimModalProps {
 }
 
 type ModalState = "input" | "loading" | "success" | "error";
+type ProviderChoice = "auto" | "privacy-cash" | "magicblock-per" | "umbra";
 
 export function SendClaimModal({
   isOpen,
@@ -31,15 +36,34 @@ export function SendClaimModal({
   const [passphrase, setPassphrase] = useState("");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [provider, setProvider] = useState<ProviderChoice>("auto");
   const { sendClaim } = useSendClaimTransaction();
   const { baseFee, feePercent } = useFee();
+  const { status: umbraStatus } = useUmbraStatus();
+  // Each protocol's SC reclaim uses its own session message — the burner
+  // privkey is encrypted with the sender's protocol-specific signature so
+  // we must mint the right one when the user picks MB or Umbra. PC's
+  // getSignature is the parent prop fallback for "auto" and "privacy-cash".
+  const { getSignature: getMbSessionSignature } =
+    useSessionSignature("magicblock-per");
+  const { getSignature: getUmbraSessionSignature } =
+    useSessionSignature("umbra");
 
   const numAmount = parseFloat(amount) || 0;
   const partnerFee = baseFee + numAmount * feePercent;
   const total = numAmount - partnerFee;
 
   const handleProceed = async () => {
-    const session = await getSignature();
+    // Pick the right session-sig hook for the chosen provider. Each
+    // protocol has its own session message (MB and Umbra), so we must
+    // mint the matching sig. PC + auto fall back to the parent prop
+    // (which uses PC's hook).
+    const session =
+      provider === "umbra"
+        ? await getUmbraSessionSignature()
+        : provider === "magicblock-per"
+          ? await getMbSessionSignature()
+          : await getSignature();
     if (!session) {
       setErrorMessage("Signature required to continue");
       setState("error");
@@ -56,6 +80,7 @@ export function SendClaimModal({
         message: message.trim() || undefined,
         signature: session.signature,
         senderPublicKey: session.address,
+        providerId: provider,
       });
 
       setClaimLink(result.claimLink);
@@ -85,6 +110,7 @@ export function SendClaimModal({
     setPassphrase("");
     setErrorMessage(null);
     setCopied(false);
+    setProvider("auto");
     onClose();
   };
 
@@ -129,6 +155,65 @@ export function SendClaimModal({
                   {message.length}/50
                 </span>
               </div>
+            </div>
+
+            {/* Privacy provider picker */}
+            <div className="mb-6">
+              <label className="text-sm text-[#121212]/50 mb-1 block">
+                Privacy protocol
+              </label>
+              <div className="flex gap-1.5 flex-wrap">
+                {(
+                  [
+                    "auto",
+                    "privacy-cash",
+                    "magicblock-per",
+                    "umbra",
+                  ] as ProviderChoice[]
+                ).map((p) => {
+                  const isUmbraDisabled =
+                    p === "umbra" && umbraStatus !== "registered";
+                  const label =
+                    p === "auto"
+                      ? "Auto"
+                      : p === "privacy-cash"
+                        ? "Privacy Cash"
+                        : p === "magicblock-per"
+                          ? "MagicBlock"
+                          : "Umbra";
+                  return (
+                    <button
+                      key={p}
+                      onClick={() => {
+                        if (isUmbraDisabled) return;
+                        setProvider(p);
+                      }}
+                      disabled={isUmbraDisabled}
+                      className={`flex-1 min-w-[72px] h-9 rounded-full text-xs font-medium transition-all ${
+                        provider === p
+                          ? "bg-[#121212] text-[#fafafa]"
+                          : isUmbraDisabled
+                            ? "bg-[#121212]/5 text-[#121212]/30 cursor-not-allowed"
+                            : "bg-[#121212]/5 text-[#121212]/70 hover:bg-[#121212]/10"
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  );
+                })}
+              </div>
+              {umbraStatus === "unregistered" && (
+                <p className="text-xs text-[#121212]/50 mt-2">
+                  Enable Umbra in your{" "}
+                  <a
+                    href="/p"
+                    className="underline underline-offset-2 decoration-dashed hover:text-[#121212]"
+                  >
+                    profile
+                  </a>{" "}
+                  to send via Umbra.
+                </p>
+              )}
             </div>
 
             {/* Amount Details */}

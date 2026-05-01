@@ -4,9 +4,12 @@
  * Client-side Umbra registration hook.
  *
  * Registers the user's wallet on Umbra so they can send/receive private
- * USDC. One-time setup: 1-3 wallet prompts (1 consent signMessage + up to
- * 3 registration txs). Idempotent — calling on an already-registered
- * wallet returns 0 sigs (no-op).
+ * USDC. One-time setup: ~4-5 wallet prompts for a fresh wallet (1 consent
+ * signMessage + 4 registration txs: InitialiseEncryptedUserAccount,
+ * RegisterTokenPublicKey, RegisterUserForAnonymousUsageV11, and the
+ * auto-fired ClaimComputationRent rent reclaim). Idempotent — calling on
+ * an already-registered wallet returns 0 sigs (no-op); calling on a
+ * half-done wallet skips completed steps.
  *
  * For tonight's testing the user pays SOL for registration tx fees and
  * PDA rent (~$9 in rent locked into Umbra's PDAs, permanently). For
@@ -100,7 +103,7 @@ export function useUmbraRegister() {
       reset({
         stage: "registering",
         detail:
-          "Sign each prompt to enable Umbra (one-time setup, 1-3 prompts)",
+          "Sign each prompt to enable Umbra (one-time setup, ~4-5 prompts)",
       });
 
       const suite = getBrowserUmbraProverSuite();

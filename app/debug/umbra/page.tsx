@@ -15,9 +15,16 @@
 
 import { useState } from "react";
 import { Keypair } from "@solana/web3.js";
+import { useWallets, useStandardWallets } from "@privy-io/react-auth/solana";
 import { useUmbraSend } from "@/hooks/useUmbraSend";
 import { useUmbraRegister } from "@/hooks/useUmbraRegister";
 import { useUmbraStatus } from "@/hooks/useUmbraStatus";
+import {
+  getClaimableUtxoScannerFunction,
+} from "@umbra-privacy/sdk";
+import { getBrowserUmbraClient } from "@/lib/client/umbraClientSDK";
+import { createUmbraSignerFromPrivyWallet } from "@/lib/client/umbraPrivySigner";
+import { markUtxosClaimed } from "@/lib/client/umbraClaimedUtxoTracker";
 
 interface StageResult {
   stage: string;
@@ -411,7 +418,101 @@ export default function UmbraSmokeTestPage() {
             </div>
           )}
         </section>
+
+        <section className="border-t border-[#121212]/10 pt-12">
+          <h2 className="text-2xl font-semibold text-[#121212] mb-4">
+            Mark current incoming as already-claimed
+          </h2>
+          <p className="text-sm text-[#121212]/70 mb-6">
+            One-off cleanup. Scans the connected wallet for currently-
+            visible Umbra UTXOs (received + publicReceived + selfBurnable
+            + publicSelfBurnable) and marks them claimed in the Supabase
+            tracker. Use this to clear phantom UTXOs that were claimed
+            BEFORE the tracker was wired in. Safe — only affects UI
+            display, never touches funds.
+          </p>
+          <ClaimMarkPanel />
+        </section>
       </div>
+    </div>
+  );
+}
+
+function ClaimMarkPanel() {
+  const { wallets: connectedWallets } = useWallets();
+  const { wallets: standardWallets } = useStandardWallets();
+  const [running, setRunning] = useState(false);
+  const [result, setResult] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const run = async () => {
+    setRunning(true);
+    setResult(null);
+    setError(null);
+    try {
+      const userAddress = connectedWallets[0]?.address;
+      if (!userAddress) throw new Error("No wallet connected");
+      const stdWallet = standardWallets.find((w: any) =>
+        w.accounts.some((a: any) => a.address === userAddress)
+      );
+      if (!stdWallet) throw new Error("No wallet-standard wallet");
+      const stdAccount = stdWallet.accounts.find(
+        (a: any) => a.address === userAddress
+      );
+      if (!stdAccount) throw new Error("No wallet-standard account");
+
+      const signer = createUmbraSignerFromPrivyWallet(stdWallet, stdAccount);
+      const rpcUrl = process.env.NEXT_PUBLIC_RPC_URL;
+      if (!rpcUrl) throw new Error("NEXT_PUBLIC_RPC_URL not set");
+      const client = await getBrowserUmbraClient({ signer, rpcUrl });
+
+      const scanner = getClaimableUtxoScannerFunction({ client });
+      const scanResult = await scanner(BigInt(0) as any, BigInt(0) as any);
+      const all = [
+        ...((scanResult as any).received ?? []),
+        ...((scanResult as any).publicReceived ?? []),
+        ...((scanResult as any).selfBurnable ?? []),
+        ...((scanResult as any).publicSelfBurnable ?? []),
+      ];
+
+      if (all.length === 0) {
+        setResult("No UTXOs found in scanner — nothing to mark.");
+        return;
+      }
+
+      await markUtxosClaimed(userAddress, all);
+      const ids = all.map(
+        (u: any) => `${u.treeIndex}:${u.insertionIndex}`
+      );
+      setResult(
+        `Marked ${all.length} UTXO(s) as claimed for ${userAddress.slice(0, 8)}…\n\nIDs: ${ids.join(", ")}`
+      );
+    } catch (err: any) {
+      setError(err?.message ?? String(err));
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  return (
+    <div>
+      <button
+        onClick={run}
+        disabled={running}
+        className="h-10 px-6 rounded-full bg-[#CB9C00] text-[#fafafa] font-medium disabled:opacity-50 mb-4"
+      >
+        {running ? "Marking…" : "Mark current incoming as already-claimed"}
+      </button>
+      {result && (
+        <pre className="text-xs text-green-700 p-3 rounded-lg border border-green-200 bg-green-50 break-all whitespace-pre-wrap font-mono">
+          {result}
+        </pre>
+      )}
+      {error && (
+        <pre className="text-xs text-red-700 p-3 rounded-lg border border-red-200 bg-red-50 break-all whitespace-pre-wrap font-mono">
+          {error}
+        </pre>
+      )}
     </div>
   );
 }

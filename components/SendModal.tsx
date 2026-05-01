@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import Image from "next/image";
 import { PublicKey } from "@solana/web3.js";
@@ -9,8 +9,13 @@ import { Spinner } from "./Spinner";
 import { QRScanner } from "./QRScanner";
 import { formatNumber } from "@/utils";
 import { useSendTransaction } from "@/hooks/useSendTransaction";
+import { useUmbraSend } from "@/hooks/useUmbraSend";
+import { useUmbraStatus } from "@/hooks/useUmbraStatus";
 import { useFee } from "@/hooks/useFee";
-import type { GetSessionSignature } from "@/hooks/useSessionSignature";
+import {
+  useSessionSignature,
+  type GetSessionSignature,
+} from "@/hooks/useSessionSignature";
 
 interface SendModalProps {
   isOpen: boolean;
@@ -22,7 +27,7 @@ interface SendModalProps {
 
 type ModalState = "input" | "loading" | "success" | "error";
 type RecipientType = "wallet" | "x";
-type ProviderChoice = "auto" | "privacy-cash" | "umbra";
+type ProviderChoice = "auto" | "privacy-cash" | "magicblock-per" | "umbra";
 
 export function SendModal({
   isOpen,
@@ -35,12 +40,21 @@ export function SendModal({
   const [xHandle, setXHandle] = useState("");
   const [recipientType, setRecipientType] = useState<RecipientType>("wallet");
   const [provider, setProvider] = useState<ProviderChoice>("auto");
+  const [recipientUmbraStatus, setRecipientUmbraStatus] = useState<
+    "idle" | "checking" | "registered" | "unregistered" | "error"
+  >("idle");
   const [state, setState] = useState<ModalState>("input");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [showQRScanner, setShowQRScanner] = useState(false);
   const [isResolvingX, setIsResolvingX] = useState(false);
   const { send } = useSendTransaction();
+  const { send: umbraSend, state: umbraSendState } = useUmbraSend();
+  const { status: umbraStatus } = useUmbraStatus();
   const { baseFee, feePercent } = useFee();
+  // Mint MB session sig — when user picks MB, server expects MB-signed
+  // sig (per `getSessionMessageForProvider("magicblock-per")`).
+  const { getSignature: getMbSessionSignature } =
+    useSessionSignature("magicblock-per");
 
   const numAmount = parseFloat(amount) || 0;
   const partnerFee = baseFee + numAmount * feePercent;
@@ -64,6 +78,50 @@ export function SendModal({
 
   const canProceed =
     recipientType === "wallet" ? isValidAddress : isValidXHandle;
+
+  // Debounced recipient registration check for wallet-mode addresses.
+  // X handles can't be checked until resolved at proceed time — pre-flight
+  // inside useUmbraSend catches that case.
+  useEffect(() => {
+    if (recipientType !== "wallet" || !isValidAddress) {
+      setRecipientUmbraStatus("idle");
+      return;
+    }
+    let cancelled = false;
+    setRecipientUmbraStatus("checking");
+    const t = setTimeout(async () => {
+      try {
+        const res = await fetch(
+          `/api/umbra/status?address=${encodeURIComponent(walletAddress)}`
+        );
+        if (cancelled) return;
+        if (!res.ok) {
+          setRecipientUmbraStatus("error");
+          return;
+        }
+        const json = (await res.json()) as { registered: boolean };
+        setRecipientUmbraStatus(
+          json.registered ? "registered" : "unregistered"
+        );
+      } catch {
+        if (!cancelled) setRecipientUmbraStatus("error");
+      }
+    }, 350);
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
+  }, [walletAddress, recipientType, isValidAddress]);
+
+  // If the user is currently on Umbra and the recipient turns out to be
+  // unregistered, we DO NOT silently switch them — that would route the
+  // send through PC and surprise the user with a PC sig prompt. Instead
+  // we block proceed (see canProceedFinal below) and show a clear hint.
+  // The user must manually pick a different protocol.
+  const umbraBlockedByRecipient =
+    provider === "umbra" &&
+    recipientType === "wallet" &&
+    recipientUmbraStatus === "unregistered";
 
   const resolveXHandle = async (): Promise<string | null> => {
     setIsResolvingX(true);
@@ -91,13 +149,6 @@ export function SendModal({
   const handleProceed = async () => {
     if (!canProceed) return;
 
-    const session = await getSignature();
-    if (!session) {
-      setErrorMessage("Signature required to continue");
-      setState("error");
-      return;
-    }
-
     setState("loading");
     setErrorMessage(null);
 
@@ -114,14 +165,34 @@ export function SendModal({
         setWalletAddress(resolved);
       }
 
-      await send({
-        receiverAddress,
-        amount: numAmount,
-        token: "USDC",
-        signature: session.signature,
-        senderPublicKey: session.address,
-        providerId: provider === "auto" ? undefined : provider,
-      });
+      // Umbra direct Send runs the SDK client-side (3 prompts: consent + 2 deposit txs).
+      // PC, MB, and Auto continue through the server-prepare/submit flow,
+      // each requiring a session sig matching their own message.
+      if (provider === "umbra") {
+        const baseUnits = BigInt(Math.round(numAmount * 1_000_000));
+        await umbraSend({
+          receiverAddress,
+          amountBaseUnits: baseUnits,
+        });
+      } else {
+        // Pick the right session-sig hook for the chosen protocol.
+        // PC + Auto use the parent's PC sig (the default).
+        const session =
+          provider === "magicblock-per"
+            ? await getMbSessionSignature()
+            : await getSignature();
+        if (!session) {
+          throw new Error("Signature required to continue");
+        }
+        await send({
+          receiverAddress,
+          amount: numAmount,
+          token: "USDC",
+          signature: session.signature,
+          senderPublicKey: session.address,
+          providerId: provider === "auto" ? undefined : provider,
+        });
+      }
       setState("success");
     } catch (error: any) {
       console.error("Send failed:", error);
@@ -138,6 +209,7 @@ export function SendModal({
     setProvider("auto");
     setErrorMessage(null);
     setIsResolvingX(false);
+    setRecipientUmbraStatus("idle");
     onClose();
   };
 
@@ -271,33 +343,87 @@ export function SendModal({
                 <label className="text-sm text-[#121212]/50 mb-1 block">
                   Privacy protocol
                 </label>
-                <div className="flex gap-1.5">
-                  {(["auto", "privacy-cash", "umbra"] as ProviderChoice[]).map(
-                    (p) => (
+                <div className="flex gap-1.5 flex-wrap">
+                  {(
+                    [
+                      "auto",
+                      "privacy-cash",
+                      "magicblock-per",
+                      "umbra",
+                    ] as ProviderChoice[]
+                  ).map((p) => {
+                    const senderUmbraDisabled =
+                      p === "umbra" && umbraStatus !== "registered";
+                    const recipientUmbraDisabled =
+                      p === "umbra" &&
+                      recipientType === "wallet" &&
+                      recipientUmbraStatus === "unregistered";
+                    const isUmbraDisabled =
+                      senderUmbraDisabled || recipientUmbraDisabled;
+                    const label =
+                      p === "auto"
+                        ? "Auto"
+                        : p === "privacy-cash"
+                          ? "Privacy Cash"
+                          : p === "magicblock-per"
+                            ? "MagicBlock"
+                            : "Umbra";
+                    return (
                       <button
                         key={p}
-                        onClick={() => setProvider(p)}
-                        className={`flex-1 h-9 rounded-full text-xs font-medium transition-all ${
+                        onClick={() => {
+                          if (isUmbraDisabled) return;
+                          setProvider(p);
+                        }}
+                        disabled={isUmbraDisabled}
+                        className={`flex-1 min-w-[72px] h-9 rounded-full text-xs font-medium transition-all ${
                           provider === p
                             ? "bg-[#121212] text-[#fafafa]"
-                            : "bg-[#121212]/5 text-[#121212]/70 hover:bg-[#121212]/10"
+                            : isUmbraDisabled
+                              ? "bg-[#121212]/5 text-[#121212]/30 cursor-not-allowed"
+                              : "bg-[#121212]/5 text-[#121212]/70 hover:bg-[#121212]/10"
                         }`}
                       >
-                        {p === "auto"
-                          ? "Auto"
-                          : p === "privacy-cash"
-                            ? "Privacy Cash"
-                            : "Umbra"}
+                        {label}
                       </button>
-                    )
-                  )}
+                    );
+                  })}
                 </div>
-                {provider === "umbra" && (
+                {umbraStatus === "unregistered" && (
                   <p className="text-xs text-[#121212]/50 mt-2">
-                    Recipient must be registered on Umbra. The send will fail
-                    cleanly if they aren&apos;t.
+                    Enable Umbra in your{" "}
+                    <a
+                      href="/p"
+                      className="underline underline-offset-2 decoration-dashed hover:text-[#121212]"
+                    >
+                      profile
+                    </a>{" "}
+                    to send via Umbra.
                   </p>
                 )}
+                {umbraStatus === "registered" &&
+                  recipientType === "wallet" &&
+                  recipientUmbraStatus === "checking" && (
+                    <p className="text-xs text-[#121212]/40 mt-2">
+                      Checking recipient on Umbra…
+                    </p>
+                  )}
+                {umbraStatus === "registered" &&
+                  recipientType === "wallet" &&
+                  recipientUmbraStatus === "unregistered" && (
+                    <p className="text-xs text-[#121212]/50 mt-2">
+                      Recipient is not registered on Umbra — pick Privacy Cash
+                      or have them enable Umbra in their profile.
+                    </p>
+                  )}
+                {provider === "umbra" &&
+                  umbraStatus === "registered" &&
+                  recipientType === "x" && (
+                    <p className="text-xs text-[#121212]/50 mt-2">
+                      We&apos;ll resolve the X handle when you proceed; the
+                      send will fail cleanly if they&apos;re not on Umbra.
+                    </p>
+                  )}
               </div>
 
               {/* Amount Details */}
@@ -327,7 +453,7 @@ export function SendModal({
               {/* Proceed Button */}
               <motion.button
                 onClick={handleProceed}
-                disabled={!canProceed || isResolvingX}
+                disabled={!canProceed || isResolvingX || umbraBlockedByRecipient}
                 whileTap={{ scale: 0.98 }}
                 className="w-full h-10 bg-[#121212] rounded-full flex items-center justify-center text-[#fafafa] font-semibold disabled:opacity-40 disabled:cursor-not-allowed transition-opacity shadow-[0_4px_12px_rgba(18,18,18,0.15)]"
               >
@@ -358,8 +484,21 @@ export function SendModal({
             >
               <Spinner size={48} color="#121212" />
               <p className="mt-4 text-[#121212]/70">
-                Processing transaction...
+                {provider === "umbra"
+                  ? umbraSendState.stage === "checking-recipient"
+                    ? "Checking recipient on Umbra..."
+                    : umbraSendState.stage === "depositing"
+                      ? "Sign each prompt to send privately"
+                      : umbraSendState.stage === "recording"
+                        ? "Finalizing..."
+                        : "Preparing private send..."
+                  : "Processing transaction..."}
               </p>
+              {provider === "umbra" && umbraSendState.stage === "depositing" && (
+                <p className="mt-1 text-[#121212]/50 text-xs">
+                  ~3 wallet prompts total
+                </p>
+              )}
             </motion.div>
           )}
 

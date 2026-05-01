@@ -28,7 +28,7 @@ import type {
   IZkProverSuite,
 } from "@umbra-privacy/sdk/interfaces";
 
-const UMBRA_INDEXER = "https://indexer.umbraprivacy.com";
+const UMBRA_INDEXER = "https://utxo-indexer.api.umbraprivacy.com";
 
 // Cached suite — circuit asset providers can be reused across all
 // browser-side SDK calls within the same page session.
@@ -131,6 +131,17 @@ export function clearStoredMasterSeed(address: string) {
   sessionStorage.removeItem(masterSeedStorageKey(address));
 }
 
+/**
+ * Check whether a master seed is already cached for a given address.
+ * Used by `useUmbraBalance` to decide whether to auto-fetch (silent) vs
+ * wait for the user to click "Reveal" — keeps profile loads from
+ * surprising users with a wallet popup on a fresh session.
+ */
+export function hasStoredMasterSeed(address: string): boolean {
+  if (typeof window === "undefined") return false;
+  return sessionStorage.getItem(masterSeedStorageKey(address)) !== null;
+}
+
 export async function getBrowserUmbraClient(
   args: BrowserUmbraClientArgs
 ): Promise<IUmbraClient> {
@@ -159,4 +170,19 @@ export async function getBrowserUmbraClient(
 // Clear the cached client — call on wallet disconnect / logout.
 export function clearBrowserUmbraClientCache() {
   cachedClient = null;
+}
+
+// Cached Umbra relayer instance for browser. Used by claim flows
+// (claimable UTXO → encrypted balance) which require relayer-submitted
+// transactions.
+let cachedRelayer: any | null = null;
+
+export async function getBrowserUmbraRelayer() {
+  if (cachedRelayer) return cachedRelayer;
+  const { getUmbraRelayer } = await import("@umbra-privacy/sdk");
+  const apiEndpoint =
+    process.env.NEXT_PUBLIC_UMBRA_RELAYER_URL ||
+    "https://relayer.api.umbraprivacy.com";
+  cachedRelayer = getUmbraRelayer({ apiEndpoint });
+  return cachedRelayer;
 }

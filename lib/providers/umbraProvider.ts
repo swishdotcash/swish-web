@@ -23,6 +23,12 @@ import {
   submitUmbraFulfill,
   submitUmbraSend,
 } from "../sponsor/umbraSend";
+import {
+  claimUmbraSendClaim,
+  prepareUmbraSendClaim,
+  reclaimUmbraSendClaim,
+  submitUmbraSendClaim,
+} from "../sponsor/umbraSendClaim";
 import type {
   ClaimInput,
   ClaimResult,
@@ -42,9 +48,6 @@ import type {
   SubmitSendInput,
   SubmitSendResult,
 } from "./types";
-
-const NOT_IMPLEMENTED_SC =
-  "Umbra Send & Claim is not yet implemented (coming in a follow-up)";
 
 export const umbraProvider: PrivacySendProvider = {
   id: "umbra",
@@ -128,22 +131,78 @@ export const umbraProvider: PrivacySendProvider = {
   },
 
   async prepareSendClaim(
-    _input: PrepareSendClaimInput
+    input: PrepareSendClaimInput
   ): Promise<PrepareSendClaimOutput> {
-    throw new Error(NOT_IMPLEMENTED_SC);
+    const result = await prepareUmbraSendClaim({
+      connection: input.connection,
+      senderPublicKey: input.senderPublicKey,
+      sessionSignature: input.sessionSignature,
+      amount: input.amount,
+      token: input.token,
+      message: input.message,
+      providerId: this.id,
+    });
+    return {
+      activityId: result.activityId,
+      unsignedDepositTx: result.unsignedDepositTx,
+      lastValidBlockHeight: result.lastValidBlockHeight,
+      passphrase: result.passphrase,
+      burnerAddress: result.burnerAddress,
+      estimatedFeeLamports: result.estimatedFeeLamports,
+      estimatedFeeSOL: result.estimatedFeeSOL,
+    };
   },
 
   async submitSendClaim(
-    _input: SubmitSendClaimInput
+    input: SubmitSendClaimInput
   ): Promise<SubmitSendClaimResult> {
-    throw new Error(NOT_IMPLEMENTED_SC);
+    const result = await submitUmbraSendClaim({
+      connection: input.connection,
+      signedDepositTx: input.signedDepositTx,
+      sessionSignature: input.sessionSignature,
+      activityId: input.activityId,
+      senderPublicKey: input.senderPublicKey,
+      lastValidBlockHeight: input.lastValidBlockHeight,
+    });
+    return {
+      activityId: result.activityId,
+      depositTx: result.depositTx,
+      withdrawTx: result.withdrawTx,
+      claimLink: result.claimLink,
+      burnerAddress: result.burnerAddress,
+    };
   },
 
-  async claim(_input: ClaimInput): Promise<ClaimResult> {
-    throw new Error(NOT_IMPLEMENTED_SC);
+  async claim(input: ClaimInput): Promise<ClaimResult> {
+    const result = await claimUmbraSendClaim({
+      connection: input.connection,
+      activityId: input.activityId,
+      passphrase: input.passphrase,
+      receiverAddress: input.receiverAddress,
+      sponsorKeypair: input.sponsorKeypair,
+      providerId: this.id,
+    });
+    return {
+      activityId: result.activityId,
+      claimTx: result.claimTx,
+      amountReceived: result.amountReceived,
+      token: result.token,
+    };
   },
 
-  async reclaim(_input: ReclaimInput): Promise<ReclaimResult> {
-    throw new Error(NOT_IMPLEMENTED_SC);
+  async reclaim(input: ReclaimInput): Promise<ReclaimResult> {
+    const result = await reclaimUmbraSendClaim({
+      connection: input.connection,
+      activityId: input.activityId,
+      sessionSignature: input.sessionSignature,
+      senderPublicKey: input.senderPublicKey,
+      sponsorKeypair: input.sponsorKeypair,
+    });
+    return {
+      activityId: result.activityId,
+      reclaimTx: result.reclaimTx,
+      amountReclaimed: result.amountReclaimed,
+      token: result.token,
+    };
   },
 };
