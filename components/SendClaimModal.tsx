@@ -8,7 +8,6 @@ import { Spinner } from "./Spinner";
 import { formatNumber } from "@/utils";
 import { useSendClaimTransaction } from "@/hooks/useSendClaimTransaction";
 import { useProtocolFee } from "@/hooks/useProtocolFee";
-import { useUmbraStatus } from "@/hooks/useUmbraStatus";
 import {
   useSessionSignature,
   type GetSessionSignature,
@@ -22,7 +21,12 @@ interface SendClaimModalProps {
 }
 
 type ModalState = "input" | "loading" | "success" | "error";
-type ProviderChoice = "auto" | "privacy-cash" | "magicblock-per" | "umbra";
+// Send & Claim does not offer Umbra: the burner SC pattern adds 0.7%
+// claim fee + extra failure modes without giving the recipient any
+// privacy benefit (they get USDC in their ATA either way). Umbra stays
+// available for direct Send / Request fulfill, where it actually
+// changes the recipient's privacy posture.
+type ProviderChoice = "auto" | "privacy-cash" | "magicblock-per";
 
 export function SendClaimModal({
   isOpen,
@@ -38,15 +42,12 @@ export function SendClaimModal({
   const [copied, setCopied] = useState(false);
   const [provider, setProvider] = useState<ProviderChoice>("auto");
   const { sendClaim } = useSendClaimTransaction();
-  const { status: umbraStatus } = useUmbraStatus();
   // Each protocol's SC reclaim uses its own session message — the burner
   // privkey is encrypted with the sender's protocol-specific signature so
-  // we must mint the right one when the user picks MB or Umbra. PC's
-  // getSignature is the parent prop fallback for "auto" and "privacy-cash".
+  // we must mint the right one when the user picks MB. PC's getSignature
+  // is the parent prop fallback for "auto" and "privacy-cash".
   const { getSignature: getMbSessionSignature } =
     useSessionSignature("magicblock-per");
-  const { getSignature: getUmbraSessionSignature } =
-    useSessionSignature("umbra");
 
   const numAmount = parseFloat(amount) || 0;
   // Per-protocol fee. SC has different fee structure than direct send:
@@ -61,16 +62,13 @@ export function SendClaimModal({
   const total = numAmount - partnerFee;
 
   const handleProceed = async () => {
-    // Pick the right session-sig hook for the chosen provider. Each
-    // protocol has its own session message (MB and Umbra), so we must
-    // mint the matching sig. PC + auto fall back to the parent prop
+    // Pick the right session-sig hook for the chosen provider. MB has
+    // its own session message; PC + auto fall back to the parent prop
     // (which uses PC's hook).
     const session =
-      provider === "umbra"
-        ? await getUmbraSessionSignature()
-        : provider === "magicblock-per"
-          ? await getMbSessionSignature()
-          : await getSignature();
+      provider === "magicblock-per"
+        ? await getMbSessionSignature()
+        : await getSignature();
     if (!session) {
       setErrorMessage("Signature required to continue");
       setState("error");
@@ -175,33 +173,22 @@ export function SendClaimModal({
                     "auto",
                     "privacy-cash",
                     "magicblock-per",
-                    "umbra",
                   ] as ProviderChoice[]
                 ).map((p) => {
-                  const isUmbraDisabled =
-                    p === "umbra" && umbraStatus !== "registered";
                   const label =
                     p === "auto"
                       ? "Auto"
                       : p === "privacy-cash"
                         ? "Privacy Cash"
-                        : p === "magicblock-per"
-                          ? "MagicBlock"
-                          : "Umbra";
+                        : "MagicBlock";
                   return (
                     <button
                       key={p}
-                      onClick={() => {
-                        if (isUmbraDisabled) return;
-                        setProvider(p);
-                      }}
-                      disabled={isUmbraDisabled}
+                      onClick={() => setProvider(p)}
                       className={`flex-1 min-w-[72px] h-9 rounded-full text-xs font-medium transition-all ${
                         provider === p
                           ? "bg-[#121212] text-[#fafafa]"
-                          : isUmbraDisabled
-                            ? "bg-[#121212]/5 text-[#121212]/30 cursor-not-allowed"
-                            : "bg-[#121212]/5 text-[#121212]/70 hover:bg-[#121212]/10"
+                          : "bg-[#121212]/5 text-[#121212]/70 hover:bg-[#121212]/10"
                       }`}
                     >
                       {label}
@@ -209,18 +196,6 @@ export function SendClaimModal({
                   );
                 })}
               </div>
-              {umbraStatus === "unregistered" && (
-                <p className="text-xs text-[#121212]/50 mt-2">
-                  Enable Umbra in your{" "}
-                  <a
-                    href="/p"
-                    className="underline underline-offset-2 decoration-dashed hover:text-[#121212]"
-                  >
-                    profile
-                  </a>{" "}
-                  to send via Umbra.
-                </p>
-              )}
             </div>
 
             {/* Amount Details */}
