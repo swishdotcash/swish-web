@@ -7,7 +7,7 @@ import { Modal } from "./Modal";
 import { Spinner } from "./Spinner";
 import { formatNumber } from "@/utils";
 import { useSendClaimTransaction } from "@/hooks/useSendClaimTransaction";
-import { useFee } from "@/hooks/useFee";
+import { useProtocolFee } from "@/hooks/useProtocolFee";
 import { useUmbraStatus } from "@/hooks/useUmbraStatus";
 import {
   useSessionSignature,
@@ -38,7 +38,6 @@ export function SendClaimModal({
   const [copied, setCopied] = useState(false);
   const [provider, setProvider] = useState<ProviderChoice>("auto");
   const { sendClaim } = useSendClaimTransaction();
-  const { baseFee, feePercent } = useFee();
   const { status: umbraStatus } = useUmbraStatus();
   // Each protocol's SC reclaim uses its own session message — the burner
   // privkey is encrypted with the sender's protocol-specific signature so
@@ -50,7 +49,15 @@ export function SendClaimModal({
     useSessionSignature("umbra");
 
   const numAmount = parseFloat(amount) || 0;
-  const partnerFee = baseFee + numAmount * feePercent;
+  // Per-protocol fee. SC has different fee structure than direct send:
+  //   PC: base + 0.35% (deducted from claim)
+  //   MB: gas only
+  //   Umbra: 0.7% on claim (protocol + relayer)
+  const { feeUSDC: partnerFee, breakdown: feeBreakdown } = useProtocolFee(
+    provider,
+    numAmount,
+    "send_claim"
+  );
   const total = numAmount - partnerFee;
 
   const handleProceed = async () => {
@@ -223,7 +230,12 @@ export function SendClaimModal({
                 <span className="text-[#121212]">{formatNumber(numAmount)} USDC</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-[#121212]">Partner Fees</span>
+                <div>
+                  <span className="text-[#121212]">Partner Fees</span>
+                  <span className="text-[#121212]/40 text-xs ml-1">
+                    ({feeBreakdown})
+                  </span>
+                </div>
                 <span className="text-[#121212]">~{formatNumber(partnerFee)} USDC</span>
               </div>
               <div className="flex justify-between">

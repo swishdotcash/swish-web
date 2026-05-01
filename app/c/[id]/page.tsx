@@ -7,7 +7,7 @@ import { usePrivy } from "@privy-io/react-auth";
 import { formatNumber } from "@/utils";
 import { Spinner, ClaimPassphraseModal } from "@/components";
 import { useSessionSignature } from "@/hooks/useSessionSignature";
-import { useFee } from "@/hooks/useFee";
+import { useProtocolFee } from "@/hooks/useProtocolFee";
 import {
   DEFAULT_PROVIDER_ID,
   isProviderId,
@@ -29,8 +29,7 @@ type PageState = "loading" | "ready" | "success" | "error" | "not_found" | "alre
 
 export default function ClaimPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
-  const { login, authenticated } = usePrivy();
-  const { baseFee, feePercent } = useFee();
+  const { login, authenticated, ready } = usePrivy();
   const [claimData, setClaimData] = useState<ClaimData | null>(null);
 
   // Pick the session-sig hook variant matching the row's provider so the
@@ -41,14 +40,24 @@ export default function ClaimPage({ params }: { params: Promise<{ id: string }> 
       ? (claimData.providerId as ProviderId)
       : DEFAULT_PROVIDER_ID;
   const { walletAddress, getSignature } = useSessionSignature(reclaimProvider);
+  // Fee shown reflects the row's actual protocol — PC has its dynamic base
+  // + 0.35%, MB charges only gas, Umbra is 0.7% on claim. Hook is called
+  // unconditionally (claimData=null → amount=0, value isn't rendered yet).
+  const { feeUSDC: partnerFee } = useProtocolFee(
+    reclaimProvider,
+    claimData?.amount ?? 0,
+    "send_claim"
+  );
   const [pageState, setPageState] = useState<PageState>("loading");
   const [showPassphraseModal, setShowPassphraseModal] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   useEffect(() => {
-    // If authenticated, wait for walletAddress so the isSender check is reliable.
-    // Privy's wallet list can briefly settle to null during auth — fetching without
-    // the wallet param in that window would race-overwrite a true isSender response.
+    // Wait for Privy to finish hydrating before any fetch — otherwise an
+    // unauthenticated-looking first render fires a no-wallet fetch that
+    // can race-overwrite the correct one when wallet eventually loads.
+    if (!ready) return;
+    // Then, if authenticated, wait for walletAddress so isSender is reliable.
     if (authenticated && !walletAddress) return;
 
     async function fetchClaimData() {
@@ -83,7 +92,7 @@ export default function ClaimPage({ params }: { params: Promise<{ id: string }> 
     }
 
     fetchClaimData();
-  }, [id, walletAddress, authenticated]);
+  }, [id, walletAddress, authenticated, ready]);
 
   const handleClaim = () => {
     if (!authenticated) {
@@ -221,8 +230,17 @@ export default function ClaimPage({ params }: { params: Promise<{ id: string }> 
 
   if (!claimData) return null;
 
-  const partnerFee = baseFee + claimData.amount * feePercent;
   const youReceive = claimData.amount - partnerFee;
+
+  const providerLabel: Record<ProviderId, string> = {
+    "privacy-cash": "Privacy Cash",
+    "magicblock-per": "MagicBlock",
+    umbra: "Umbra",
+  };
+  const senderProviderLabel =
+    claimData.providerId && isProviderId(claimData.providerId)
+      ? providerLabel[claimData.providerId as ProviderId]
+      : null;
 
   return (
     <>
@@ -243,6 +261,12 @@ export default function ClaimPage({ params }: { params: Promise<{ id: string }> 
 
         {/* Details */}
         <div className="w-full max-w-[320px] space-y-2 mb-8">
+          {senderProviderLabel && (
+            <div className="flex justify-between">
+              <span className="text-[#121212]">Sent via</span>
+              <span className="text-[#121212]">{senderProviderLabel}</span>
+            </div>
+          )}
           <div className="flex justify-between">
             <span className="text-[#121212]">Partner fees</span>
             <span className="text-[#121212]">~{formatNumber(partnerFee)} USDC</span>
@@ -299,6 +323,7 @@ export default function ClaimPage({ params }: { params: Promise<{ id: string }> 
           amount={claimData.amount}
           activityId={claimData.id}
           receiverAddress={walletAddress}
+          providerId={reclaimProvider}
           onSuccess={handleClaimSuccess}
         />
       )}

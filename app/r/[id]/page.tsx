@@ -8,7 +8,7 @@ import { useWallets } from "@privy-io/react-auth/solana";
 import { formatNumber } from "@/utils";
 import { Spinner } from "@/components";
 import { useSessionSignature } from "@/hooks/useSessionSignature";
-import { useFee } from "@/hooks/useFee";
+import { useProtocolFee } from "@/hooks/useProtocolFee";
 import { useUmbraFulfill } from "@/hooks/useUmbraFulfill";
 import { useUmbraStatus } from "@/hooks/useUmbraStatus";
 
@@ -50,13 +50,19 @@ export default function RequestPage({
   // Request cancel is protocol-agnostic — uses the Swish request session sig.
   const { getSignature: getRequestSessionSignature } =
     useSessionSignature("request");
-  const { baseFee, feePercent } = useFee();
   const [requestData, setRequestData] = useState<RequestData | null>(null);
   const [pageState, setPageState] = useState<PageState>("loading");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [provider, setProvider] = useState<ProviderChoice>("auto");
   const { fulfill: umbraFulfill, state: umbraFulfillState } = useUmbraFulfill();
   const { status: umbraStatus } = useUmbraStatus();
+  // Per-protocol fee depends on what the payer picks. Hook must be called
+  // unconditionally; gracefully handles requestData=null (amount=0).
+  const { feeUSDC: partnerFee, breakdown: feeBreakdown } = useProtocolFee(
+    provider,
+    requestData?.amount ?? 0,
+    "fulfill"
+  );
 
   const solanaWallet = wallets[0];
 
@@ -354,7 +360,6 @@ export default function RequestPage({
 
   if (!requestData) return null;
 
-  const partnerFee = baseFee + requestData.amount * feePercent;
   const requestorReceives = requestData.amount - partnerFee;
 
   return (
@@ -384,7 +389,12 @@ export default function RequestPage({
           </div>
         ) : null}
         <div className="flex justify-between">
-          <span className="text-[#121212]">Partner fees</span>
+          <div>
+            <span className="text-[#121212]">Partner fees</span>
+            <span className="text-[#121212]/40 text-xs ml-1">
+              ({feeBreakdown})
+            </span>
+          </div>
           <span className="text-[#121212]">
             ~{formatNumber(partnerFee)} USDC
           </span>

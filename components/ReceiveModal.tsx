@@ -6,7 +6,7 @@ import Image from "next/image";
 import { Modal } from "./Modal";
 import { Spinner } from "./Spinner";
 import { formatNumber } from "@/utils";
-import { useFee } from "@/hooks/useFee";
+import { useProtocolFee } from "@/hooks/useProtocolFee";
 import {
   useSessionSignature,
   type GetSessionSignature,
@@ -35,10 +35,15 @@ export function ReceiveModal({
   const [requestLink, setRequestLink] = useState("");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
-  const { baseFee, feePercent } = useFee();
-
   const numAmount = parseFloat(amount) || 0;
-  const partnerFee = baseFee + numAmount * feePercent;
+  // Requester doesn't pick a protocol — the payer picks at fulfill time.
+  // Show worst-case fee (PC, the auto-router default). Other protocols
+  // may charge less (MB ~0, Umbra 0).
+  const { feeUSDC: partnerFee, breakdown: feeBreakdown } = useProtocolFee(
+    "auto",
+    numAmount,
+    "fulfill"
+  );
   const youReceive = numAmount - partnerFee;
 
   const handleProceed = async () => {

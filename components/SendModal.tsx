@@ -11,7 +11,7 @@ import { formatNumber } from "@/utils";
 import { useSendTransaction } from "@/hooks/useSendTransaction";
 import { useUmbraSend } from "@/hooks/useUmbraSend";
 import { useUmbraStatus } from "@/hooks/useUmbraStatus";
-import { useFee } from "@/hooks/useFee";
+import { useProtocolFee } from "@/hooks/useProtocolFee";
 import {
   useSessionSignature,
   type GetSessionSignature,
@@ -50,14 +50,19 @@ export function SendModal({
   const { send } = useSendTransaction();
   const { send: umbraSend, state: umbraSendState } = useUmbraSend();
   const { status: umbraStatus } = useUmbraStatus();
-  const { baseFee, feePercent } = useFee();
   // Mint MB session sig — when user picks MB, server expects MB-signed
   // sig (per `getSessionMessageForProvider("magicblock-per")`).
   const { getSignature: getMbSessionSignature } =
     useSessionSignature("magicblock-per");
 
   const numAmount = parseFloat(amount) || 0;
-  const partnerFee = baseFee + numAmount * feePercent;
+  // Fee shown depends on the picked protocol. Auto falls back to PC's
+  // worst-case fee (since PC is the auto-router default).
+  const { feeUSDC: partnerFee, breakdown: feeBreakdown } = useProtocolFee(
+    provider,
+    numAmount,
+    "send"
+  );
   const total = numAmount - partnerFee;
 
   const isValidAddress = useMemo(() => {
@@ -435,7 +440,12 @@ export function SendModal({
                   </span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-[#121212]">Partner Fees</span>
+                  <div>
+                    <span className="text-[#121212]">Partner Fees</span>
+                    <span className="text-[#121212]/40 text-xs ml-1">
+                      ({feeBreakdown})
+                    </span>
+                  </div>
                   <span className="text-[#121212]">
                     ~{formatNumber(partnerFee)} USDC
                   </span>
