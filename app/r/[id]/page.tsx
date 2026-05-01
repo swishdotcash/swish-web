@@ -9,8 +9,10 @@ import { formatNumber } from "@/utils";
 import { Spinner } from "@/components";
 import { useSessionSignature } from "@/hooks/useSessionSignature";
 import { useProtocolFee } from "@/hooks/useProtocolFee";
+import { useAutoRoute } from "@/hooks/useAutoRoute";
 import { useUmbraFulfill } from "@/hooks/useUmbraFulfill";
 import { useUmbraStatus } from "@/hooks/useUmbraStatus";
+import type { ProviderId } from "@/lib/providers/types";
 
 interface RequestData {
   id: string;
@@ -56,10 +58,27 @@ export default function RequestPage({
   const [provider, setProvider] = useState<ProviderChoice>("auto");
   const { fulfill: umbraFulfill, state: umbraFulfillState } = useUmbraFulfill();
   const { status: umbraStatus } = useUmbraStatus();
-  // Per-protocol fee depends on what the payer picks. Hook must be called
-  // unconditionally; gracefully handles requestData=null (amount=0).
+
+  // Resolve Auto for the payer once we know both addresses (payer's
+  // wallet + requester's address from the row). The hook gracefully
+  // sits idle when inputs aren't ready.
+  const { resolved: autoResolved } = useAutoRoute({
+    enabled: provider === "auto" && !!requestData?.receiverAddress,
+    flow: "fulfill",
+    senderAddress: walletAddress,
+    receiverAddress: requestData?.receiverAddress ?? null,
+  });
+
+  // Effective provider for fee + dispatch. When picker is Auto and we've
+  // resolved, use the resolved one; otherwise fall back to "auto" (fee
+  // hook treats as PC worst-case).
+  const effectiveProvider: ProviderId | "auto" =
+    provider === "auto" ? (autoResolved ?? "auto") : provider;
+
+  // Per-protocol fee, driven by the effective provider so Auto reflects
+  // its resolved route's fee instead of PC worst-case.
   const { feeUSDC: partnerFee, breakdown: feeBreakdown } = useProtocolFee(
-    provider,
+    effectiveProvider,
     requestData?.amount ?? 0,
     "fulfill"
   );
@@ -113,7 +132,24 @@ export default function RequestPage({
     setErrorMessage(null);
 
     try {
-      if (provider === "umbra") {
+      // Resolve Auto if needed. For wallet-mode payers (always the case
+      // on /r since requester is always a wallet address), useAutoRoute
+      // has already resolved by the time the user clicks Pay — so this
+      // only fires the preview fetch as a defensive fallback.
+      let dispatchProvider: ProviderId | "auto" = effectiveProvider;
+      if (provider === "auto" && dispatchProvider === "auto") {
+        const previewRes = await fetch(
+          `/api/router/preview?flow=fulfill&sender=${encodeURIComponent(
+            walletAddress || ""
+          )}&receiver=${encodeURIComponent(requestData.receiverAddress)}`
+        );
+        const previewJson = (await previewRes.json()) as {
+          providerId: ProviderId;
+        };
+        dispatchProvider = previewJson.providerId;
+      }
+
+      if (dispatchProvider === "umbra") {
         // Client-side Umbra fulfill: 3 wallet prompts, requester must be
         // registered. Fail-fast inside the hook if not.
         const baseUnits = BigInt(Math.round(requestData.amount * 1_000_000));
@@ -126,74 +162,85 @@ export default function RequestPage({
         return;
       }
 
-      // Pick the right session-sig hook for the chosen protocol.
-      const session =
-        provider === "magicblock-per"
-          ? await getMbSessionSignature()
-          : await getSignature();
-      if (!session) {
-        setErrorMessage("Signature required to continue");
-        setPageState("error");
-        return;
-      }
+      // Inner helper — runs the full prepare→sign→submit cycle for a
+      // given non-Umbra provider. Throws on any step's failure.
+      const runMbOrPc = async (target: ProviderId) => {
+        const session =
+          target === "magicblock-per"
+            ? await getMbSessionSignature()
+            : await getSignature();
+        if (!session) {
+          throw new Error("Signature required to continue");
+        }
 
-      // Step 1: Prepare the transaction
-      const prepareRes = await fetch("/api/request/fulfill/prepare", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Session-Signature": session.signature,
-        },
-        body: JSON.stringify({
-          activityId: id,
-          payerPublicKey: session.address,
-          providerId: provider === "auto" ? undefined : provider,
-        }),
-      });
+        const prepareRes = await fetch("/api/request/fulfill/prepare", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Session-Signature": session.signature,
+          },
+          body: JSON.stringify({
+            activityId: id,
+            payerPublicKey: session.address,
+            providerId: target,
+          }),
+        });
 
-      if (!prepareRes.ok) {
-        const errorData = await prepareRes.json();
-        throw new Error(errorData.error || "Failed to prepare transaction");
-      }
+        if (!prepareRes.ok) {
+          const errorData = await prepareRes.json();
+          throw new Error(errorData.error || "Failed to prepare transaction");
+        }
 
-      const prepareResult = await prepareRes.json();
+        const prepareResult = await prepareRes.json();
 
-      // Step 2: Sign the transaction
-      const depositTxBytes = Uint8Array.from(
-        atob(prepareResult.unsignedDepositTx),
-        (c) => c.charCodeAt(0),
-      );
+        const depositTxBytes = Uint8Array.from(
+          atob(prepareResult.unsignedDepositTx),
+          (c) => c.charCodeAt(0),
+        );
 
-      const signedDepositResult = await solanaWallet.signTransaction({
-        transaction: depositTxBytes,
-      });
+        const signedDepositResult = await solanaWallet.signTransaction({
+          transaction: depositTxBytes,
+        });
 
-      const signedDepositTx = btoa(
-        String.fromCharCode.apply(
-          null,
-          Array.from(signedDepositResult.signedTransaction),
-        ),
-      );
+        const signedDepositTx = btoa(
+          String.fromCharCode.apply(
+            null,
+            Array.from(signedDepositResult.signedTransaction),
+          ),
+        );
 
-      // Step 3: Submit the transaction
-      const submitRes = await fetch("/api/request/fulfill/submit", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Session-Signature": session.signature,
-        },
-        body: JSON.stringify({
-          signedDepositTx,
-          activityId: prepareResult.activityId,
-          payerPublicKey: session.address,
-          lastValidBlockHeight: prepareResult.lastValidBlockHeight,
-          providerId: provider === "auto" ? undefined : provider,
-        }),
-      });
+        const submitRes = await fetch("/api/request/fulfill/submit", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Session-Signature": session.signature,
+          },
+          body: JSON.stringify({
+            signedDepositTx,
+            activityId: prepareResult.activityId,
+            payerPublicKey: session.address,
+            lastValidBlockHeight: prepareResult.lastValidBlockHeight,
+            providerId: target,
+          }),
+        });
 
-      if (!submitRes.ok) {
-        const errorData = await submitRes.json();
-        throw new Error(errorData.error || "Failed to submit transaction");
+        if (!submitRes.ok) {
+          const errorData = await submitRes.json();
+          throw new Error(errorData.error || "Failed to submit transaction");
+        }
+      };
+
+      try {
+        await runMbOrPc(dispatchProvider as ProviderId);
+      } catch (mbErr: any) {
+        // Auto-fallback: MB failed under Auto → retry once with PC.
+        if (provider === "auto" && dispatchProvider === "magicblock-per") {
+          console.warn("MB failed under Auto, falling back to PC:", mbErr);
+          dispatchProvider = "privacy-cash";
+          await runMbOrPc("privacy-cash");
+        } else {
+          throw mbErr;
+        }
       }
 
       setPageState("success");
@@ -388,6 +435,20 @@ export default function RequestPage({
             </span>
           </div>
         ) : null}
+        {provider === "auto" && !isRequestor && (
+          <div className="flex justify-between">
+            <span className="text-[#121212]">Routed via</span>
+            <span className="text-[#121212]">
+              {autoResolved === "umbra"
+                ? "Umbra"
+                : autoResolved === "magicblock-per"
+                  ? "MagicBlock"
+                  : autoResolved === "privacy-cash"
+                    ? "Privacy Cash"
+                    : "…"}
+            </span>
+          </div>
+        )}
         <div className="flex justify-between">
           <div>
             <span className="text-[#121212]">Partner fees</span>

@@ -12,10 +12,12 @@ import { useSendTransaction } from "@/hooks/useSendTransaction";
 import { useUmbraSend } from "@/hooks/useUmbraSend";
 import { useUmbraStatus } from "@/hooks/useUmbraStatus";
 import { useProtocolFee } from "@/hooks/useProtocolFee";
+import { useAutoRoute } from "@/hooks/useAutoRoute";
 import {
   useSessionSignature,
   type GetSessionSignature,
 } from "@/hooks/useSessionSignature";
+import type { ProviderId } from "@/lib/providers/types";
 
 interface SendModalProps {
   isOpen: boolean;
@@ -50,20 +52,16 @@ export function SendModal({
   const { send } = useSendTransaction();
   const { send: umbraSend, state: umbraSendState } = useUmbraSend();
   const { status: umbraStatus } = useUmbraStatus();
-  // Mint MB session sig — when user picks MB, server expects MB-signed
-  // sig (per `getSessionMessageForProvider("magicblock-per")`).
-  const { getSignature: getMbSessionSignature } =
-    useSessionSignature("magicblock-per");
+  // Mint MB session sig — when user picks MB (or Auto resolves to MB),
+  // server expects MB-signed sig (per `getSessionMessageForProvider`).
+  // walletAddress here is the SENDER (current user) — same regardless of
+  // session-context arg.
+  const {
+    getSignature: getMbSessionSignature,
+    walletAddress: senderAddress,
+  } = useSessionSignature("magicblock-per");
 
   const numAmount = parseFloat(amount) || 0;
-  // Fee shown depends on the picked protocol. Auto falls back to PC's
-  // worst-case fee (since PC is the auto-router default).
-  const { feeUSDC: partnerFee, breakdown: feeBreakdown } = useProtocolFee(
-    provider,
-    numAmount,
-    "send"
-  );
-  const total = numAmount - partnerFee;
 
   const isValidAddress = useMemo(() => {
     if (!walletAddress) return false;
@@ -80,6 +78,32 @@ export function SendModal({
     // Basic X handle validation: alphanumeric and underscores, 1-15 chars
     return /^[a-zA-Z0-9_]{1,15}$/.test(xHandle);
   }, [xHandle]);
+
+  // Resolve Auto for wallet-mode recipients: ask the preview endpoint
+  // which protocol Auto would dispatch to. For X-handle mode we don't
+  // know the recipient until proceed time, so resolution happens inline
+  // there instead.
+  const { resolved: autoResolved } = useAutoRoute({
+    enabled:
+      provider === "auto" && recipientType === "wallet" && isValidAddress,
+    flow: "send",
+    senderAddress: senderAddress,
+    receiverAddress:
+      recipientType === "wallet" && isValidAddress ? walletAddress : null,
+  });
+
+  // Effective provider for dispatch + fee display. When picker is Auto
+  // and we've resolved, use the resolved one; otherwise fall back to
+  // "auto" (which the fee hook treats as PC worst-case).
+  const effectiveProvider: ProviderId | "auto" =
+    provider === "auto" ? (autoResolved ?? "auto") : provider;
+
+  const { feeUSDC: partnerFee, breakdown: feeBreakdown } = useProtocolFee(
+    effectiveProvider,
+    numAmount,
+    "send"
+  );
+  const total = numAmount - partnerFee;
 
   const canProceed =
     recipientType === "wallet" ? isValidAddress : isValidXHandle;
@@ -170,33 +194,74 @@ export function SendModal({
         setWalletAddress(resolved);
       }
 
+      // For Auto + X-handle, the recipient just resolved — call the
+      // router preview now that we know the receiver. For Auto + wallet
+      // mode, autoResolved is already populated by useAutoRoute.
+      let dispatchProvider: ProviderId | "auto" = effectiveProvider;
+      if (provider === "auto" && dispatchProvider === "auto") {
+        const previewRes = await fetch(
+          `/api/router/preview?flow=send&sender=${encodeURIComponent(
+            senderAddress || ""
+          )}&receiver=${encodeURIComponent(receiverAddress)}`
+        );
+        const previewJson = (await previewRes.json()) as {
+          providerId: ProviderId;
+        };
+        dispatchProvider = previewJson.providerId;
+      }
+
       // Umbra direct Send runs the SDK client-side (3 prompts: consent + 2 deposit txs).
-      // PC, MB, and Auto continue through the server-prepare/submit flow,
-      // each requiring a session sig matching their own message.
-      if (provider === "umbra") {
+      // PC and MB go through the server-prepare/submit flow with their
+      // own session messages.
+      if (dispatchProvider === "umbra") {
         const baseUnits = BigInt(Math.round(numAmount * 1_000_000));
         await umbraSend({
           receiverAddress,
           amountBaseUnits: baseUnits,
         });
       } else {
-        // Pick the right session-sig hook for the chosen protocol.
-        // PC + Auto use the parent's PC sig (the default).
+        // Pick the right session-sig hook for the resolved protocol.
+        // PC uses the parent's PC sig (the default).
         const session =
-          provider === "magicblock-per"
+          dispatchProvider === "magicblock-per"
             ? await getMbSessionSignature()
             : await getSignature();
         if (!session) {
           throw new Error("Signature required to continue");
         }
-        await send({
-          receiverAddress,
-          amount: numAmount,
-          token: "USDC",
-          signature: session.signature,
-          senderPublicKey: session.address,
-          providerId: provider === "auto" ? undefined : provider,
-        });
+        try {
+          await send({
+            receiverAddress,
+            amount: numAmount,
+            token: "USDC",
+            signature: session.signature,
+            senderPublicKey: session.address,
+            // Pass the *resolved* providerId so the server validates
+            // against the matching session message and dispatches to the
+            // right provider — even when the user picked Auto.
+            providerId: dispatchProvider,
+          });
+        } catch (mbErr: any) {
+          // Auto-fallback: when picker is Auto and MB dispatch fails
+          // (catches partial outages /health doesn't see), retry once
+          // with PC. Costs a PC session-sig prompt if not cached.
+          if (provider === "auto" && dispatchProvider === "magicblock-per") {
+            console.warn("MB failed under Auto, falling back to PC:", mbErr);
+            const pcSession = await getSignature();
+            if (!pcSession) throw mbErr;
+            dispatchProvider = "privacy-cash";
+            await send({
+              receiverAddress,
+              amount: numAmount,
+              token: "USDC",
+              signature: pcSession.signature,
+              senderPublicKey: pcSession.address,
+              providerId: "privacy-cash",
+            });
+          } else {
+            throw mbErr;
+          }
+        }
       }
       setState("success");
     } catch (error: any) {
@@ -439,6 +504,22 @@ export function SendModal({
                     {formatNumber(numAmount)} USDC
                   </span>
                 </div>
+                {provider === "auto" &&
+                  recipientType === "wallet" &&
+                  isValidAddress && (
+                    <div className="flex justify-between">
+                      <span className="text-[#121212]">Routed via</span>
+                      <span className="text-[#121212]">
+                        {autoResolved === "umbra"
+                          ? "Umbra"
+                          : autoResolved === "magicblock-per"
+                            ? "MagicBlock"
+                            : autoResolved === "privacy-cash"
+                              ? "Privacy Cash"
+                              : "…"}
+                      </span>
+                    </div>
+                  )}
                 <div className="flex justify-between">
                   <div>
                     <span className="text-[#121212]">Partner Fees</span>
