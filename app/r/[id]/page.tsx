@@ -47,6 +47,9 @@ export default function RequestPage({
   // Mint MB session sig — when payer picks MB, server expects MB-signed sig.
   const { getSignature: getMbSessionSignature } =
     useSessionSignature("magicblock-per");
+  // Request cancel is protocol-agnostic — uses the Swish request session sig.
+  const { getSignature: getRequestSessionSignature } =
+    useSessionSignature("request");
   const { baseFee, feePercent } = useFee();
   const [requestData, setRequestData] = useState<RequestData | null>(null);
   const [pageState, setPageState] = useState<PageState>("loading");
@@ -213,7 +216,7 @@ export default function RequestPage({
       return;
     }
 
-    const session = await getSignature();
+    const session = await getRequestSessionSignature();
     if (!session) {
       setErrorMessage("Signature required to continue");
       setPageState("error");

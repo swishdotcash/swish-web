@@ -9,12 +9,15 @@ import {
   PC_SESSION_MESSAGE,
   MB_SESSION_MESSAGE,
   UMBRA_SESSION_MESSAGE,
+  REQUEST_SESSION_MESSAGE,
 } from "@/lib/session-messages";
 
-// Per-protocol session message + sessionStorage keys.
-// Each protocol that needs sender-side burner reclaim ciphertext encryption
-// (Send & Claim flows) uses its own message + cache. PC additionally uses its
-// sig for PC-protocol UTXO encryption (legacy).
+// Session contexts: protocol-specific (PC/MB/Umbra — for protocol crypto
+// or burner reclaim ciphertext) plus protocol-agnostic ("request" — for
+// Request create + cancel auth, since at request time the protocol isn't
+// yet chosen).
+export type SessionContext = ProviderId | "request";
+
 const SESSION_CONFIGS = {
   "privacy-cash": {
     message: PC_SESSION_MESSAGE,
@@ -31,8 +34,13 @@ const SESSION_CONFIGS = {
     signatureKey: "umbra_session_signature",
     addressKey: "umbra_session_address",
   },
+  request: {
+    message: REQUEST_SESSION_MESSAGE,
+    signatureKey: "request_session_signature",
+    addressKey: "request_session_address",
+  },
 } as const satisfies Record<
-  ProviderId,
+  SessionContext,
   { message: string; signatureKey: string; addressKey: string }
 >;
 
@@ -50,7 +58,7 @@ export type SessionSignatureResult = {
 
 export type GetSessionSignature = () => Promise<SessionSignatureResult | null>;
 
-export function useSessionSignature(provider: ProviderId = "privacy-cash") {
+export function useSessionSignature(provider: SessionContext = "privacy-cash") {
   const config = SESSION_CONFIGS[provider];
   const { authenticated, ready, user } = usePrivy();
   const { wallets } = useWallets();
@@ -174,11 +182,26 @@ export function useSessionSignature(provider: ProviderId = "privacy-cash") {
       config.addressKey,
     ]);
 
-  // Auto-clear signature on logout
+  // Auto-clear ALL session signatures on logout, not just this instance's
+  // key. Hook instances mounted in modals (MB / Umbra / Request) unmount
+  // before logout fires, so each instance must clean up everything to
+  // guarantee no stale sigs persist for the next user. Also wipes the
+  // Umbra master seed cache (sessionStorage `umbra_master_seed:<addr>`)
+  // since that's user-specific too.
   useEffect(() => {
     if (ready && !authenticated) {
-      sessionStorage.removeItem(config.signatureKey);
-      sessionStorage.removeItem(config.addressKey);
+      for (const cfg of Object.values(SESSION_CONFIGS)) {
+        sessionStorage.removeItem(cfg.signatureKey);
+        sessionStorage.removeItem(cfg.addressKey);
+      }
+      // Umbra master seeds are keyed `umbra_master_seed:<address>` —
+      // sweep all matching entries.
+      const toRemove: string[] = [];
+      for (let i = 0; i < sessionStorage.length; i++) {
+        const k = sessionStorage.key(i);
+        if (k && k.startsWith("umbra_master_seed:")) toRemove.push(k);
+      }
+      for (const k of toRemove) sessionStorage.removeItem(k);
       setState({
         signature: null,
         address: null,
@@ -186,7 +209,7 @@ export function useSessionSignature(provider: ProviderId = "privacy-cash") {
         error: null,
       });
     }
-  }, [ready, authenticated, config.signatureKey, config.addressKey]);
+  }, [ready, authenticated]);
 
   // Clear signature (manual)
   const clearSignature = useCallback(() => {

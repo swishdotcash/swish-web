@@ -93,10 +93,19 @@ export function useUmbraBalance(autoFetch = false) {
 
       const client = await getBrowserUmbraClient({ signer, rpcUrl });
 
-      // Run encrypted-balance read + claimable-UTXO scan + tracker
-      // pre-fetch in parallel.
-      const [balanceMap, scanResult, claimedIds] = await Promise.all([
-        getEncryptedBalanceQuerierFunction({ client })([USDC_MINT as any]),
+      // Prime the master seed by running one SDK call first. Both the
+      // encrypted-balance querier AND the scanner need the master seed;
+      // running them in Promise.all races — both check the empty cache
+      // simultaneously, both prompt the user. After this first call,
+      // master seed is cached in sessionStorage and subsequent calls
+      // reuse it without prompting.
+      const balanceMap = await getEncryptedBalanceQuerierFunction({
+        client,
+      })([USDC_MINT as any]);
+
+      // Now safe to parallelize. Scanner reuses the cached master seed;
+      // tracker fetch is unrelated to Umbra crypto.
+      const [scanResult, claimedIds] = await Promise.all([
         getClaimableUtxoScannerFunction({ client })(
           BigInt(0) as any,
           BigInt(0) as any

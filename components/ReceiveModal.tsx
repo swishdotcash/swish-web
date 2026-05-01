@@ -7,7 +7,10 @@ import { Modal } from "./Modal";
 import { Spinner } from "./Spinner";
 import { formatNumber } from "@/utils";
 import { useFee } from "@/hooks/useFee";
-import type { GetSessionSignature } from "@/hooks/useSessionSignature";
+import {
+  useSessionSignature,
+  type GetSessionSignature,
+} from "@/hooks/useSessionSignature";
 
 interface ReceiveModalProps {
   isOpen: boolean;
@@ -22,8 +25,11 @@ export function ReceiveModal({
   isOpen,
   onClose,
   amount,
-  getSignature,
 }: ReceiveModalProps) {
+  // Request creation is protocol-agnostic — sign with the Swish-scoped
+  // request session sig instead of any protocol's text. The parent prop
+  // `getSignature` (PC by default) is ignored here.
+  const { getSignature } = useSessionSignature("request");
   const [message, setMessage] = useState("");
   const [state, setState] = useState<ModalState>("input");
   const [requestLink, setRequestLink] = useState("");

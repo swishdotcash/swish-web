@@ -4,7 +4,7 @@ import nacl from "tweetnacl";
 
 import { createRequest } from "@/lib/operations/request";
 import { TokenType } from "@/lib/privacycash/tokens";
-import { SESSION_MESSAGE } from "@/lib/sponsor/prepareAndSubmitSend";
+import { REQUEST_SESSION_MESSAGE } from "@/lib/session-messages";
 
 export async function POST(request: NextRequest) {
   try {
@@ -56,9 +56,11 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Verify session signature proves ownership of requesterAddress
+    // Verify session signature proves ownership of requesterAddress.
+    // Request creation is protocol-agnostic, so it uses the Swish-scoped
+    // REQUEST_SESSION_MESSAGE rather than any single protocol's text.
     const requesterPubKey = new PublicKey(requesterAddress);
-    const messageBytes = Buffer.from(SESSION_MESSAGE);
+    const messageBytes = Buffer.from(REQUEST_SESSION_MESSAGE);
     const isValid = nacl.sign.detached.verify(
       messageBytes,
       sessionSigBytes,

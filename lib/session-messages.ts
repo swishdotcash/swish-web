@@ -14,6 +14,11 @@ export const PC_SESSION_MESSAGE = "Privacy Money account sign in";
 export const MB_SESSION_MESSAGE = "Magic Block Swish sign in";
 export const UMBRA_SESSION_MESSAGE = "Umbra Privacy Swish sign in";
 
+// Protocol-agnostic operations (Request create + cancel) — these don't
+// pick a protocol at create time so they use a Swish-scoped message
+// instead of any protocol's text.
+export const REQUEST_SESSION_MESSAGE = "Swish Request signature";
+
 export function getSessionMessageForProvider(provider: ProviderId): string {
   switch (provider) {
     case "privacy-cash":
