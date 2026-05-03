@@ -7,10 +7,18 @@ import Link from "next/link";
 import { usePrivy } from "@privy-io/react-auth";
 import { useExportWallet } from "@privy-io/react-auth/solana";
 import { formatNumber } from "@/utils";
-import { Spinner, AddFundsModal, WithdrawModal } from "@/components";
+import {
+  Spinner,
+  AddFundsModal,
+  WithdrawModal,
+  UnlockModal,
+} from "@/components";
 import { useSessionSignature } from "@/hooks/useSessionSignature";
 import { useUSDCBalance } from "@/hooks/useUSDCBalance";
 import { useSOLBalance } from "@/hooks/useSOLBalance";
+import { useUmbraStatus } from "@/hooks/useUmbraStatus";
+import { useUmbraRegister } from "@/hooks/useUmbraRegister";
+import { useUmbraBalance } from "@/hooks/useUmbraBalance";
 
 interface Activity {
   id: string;
@@ -51,13 +59,28 @@ export default function ProfilePage() {
   const { login, logout, authenticated, user } = usePrivy();
   const { exportWallet } = useExportWallet();
   const { walletAddress, getSignature } = useSessionSignature();
-  const { balance: usdcBalance, isLoading: usdcLoading } =
-    useUSDCBalance(walletAddress);
+  const {
+    balance: usdcBalance,
+    isLoading: usdcLoading,
+    refetch: refetchUSDCBalance,
+  } = useUSDCBalance(walletAddress);
   const {
     balance: solBalance,
     balanceUSD: solBalanceUSD,
     isLoading: solLoading,
   } = useSOLBalance(walletAddress);
+  const { status: umbraStatus, refetch: refetchUmbraStatus } = useUmbraStatus();
+  const { register: registerUmbra, state: umbraRegisterState } = useUmbraRegister();
+  const isUmbraRegistered = umbraStatus === "registered";
+  const {
+    totalUSDC: umbraBalanceUSDC,
+    totalBaseUnits: umbraBalanceBaseUnits,
+    hasPending: umbraHasPending,
+    status: umbraBalanceStatus,
+    error: umbraBalanceError,
+    refetch: refetchUmbraBalance,
+  } = useUmbraBalance(isUmbraRegistered);
+  const [showUnlock, setShowUnlock] = useState(false);
 
   const [userData, setUserData] = useState<UserData | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -133,6 +156,25 @@ export default function ProfilePage() {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {}
+  };
+
+  const handleRegisterUmbra = async () => {
+    try {
+      await registerUmbra();
+    } catch {
+      // hook surfaces error in state
+    } finally {
+      refetchUmbraStatus();
+    }
+  };
+
+  const isRegisteringUmbra =
+    umbraRegisterState.stage === "checking" ||
+    umbraRegisterState.stage === "registering";
+
+  const handleOpenUnlock = () => {
+    if (!umbraBalanceBaseUnits || umbraBalanceBaseUnits === BigInt(0)) return;
+    setShowUnlock(true);
   };
 
   const getActivityLabel = (activity: Activity) => {
@@ -246,12 +288,18 @@ export default function ProfilePage() {
     );
   }
 
-  const totalUSD = (usdcBalance || 0) + (solBalanceUSD || 0);
+  // Total = mainnet USDC + SOL (in USD) + Umbra shielded total (encrypted
+  // + filtered claimable, computed in useUmbraBalance). Shielded only
+  // contributes once the user has clicked Reveal.
+  const totalUSD =
+    (usdcBalance || 0) +
+    (solBalanceUSD || 0) +
+    (umbraBalanceStatus === "ready" ? umbraBalanceUSDC || 0 : 0);
   const allActivities = userData?.activities || [];
 
   return (
     <>
-      <main className="flex flex-col items-center p-4 w-full">
+      <main className="flex flex-col items-center p-4 w-full h-[stretch]">
         {/* Header: Address + X handle */}
         <div className="w-full max-w-[320px] mb-6">
           <div className="flex items-center justify-between gap-2 w-full">
@@ -390,6 +438,111 @@ export default function ProfilePage() {
                 </div>
               </div>
 
+              {/* Privacy section */}
+              <div className="mb-6 border-t border-[#121212]/10 pt-4">
+                <p className="text-[#121212]/50 text-xs uppercase tracking-wide mb-3">
+                  Privacy
+                </p>
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex-1 min-w-0">
+                    <p className="text-[#121212] text-sm font-medium">Umbra</p>
+                    <p className="text-[#121212]/50 text-xs">
+                      {isUmbraRegistered
+                        ? "You can send and receive private USDC via Umbra"
+                        : "Enable to receive private USDC via Umbra"}
+                    </p>
+                  </div>
+                  {isUmbraRegistered ? (
+                    <span className="text-xs font-medium text-[#008834] px-2.5 py-1 rounded-full bg-[#008834]/10 whitespace-nowrap">
+                      Enabled
+                    </span>
+                  ) : (
+                    <motion.button
+                      onClick={handleRegisterUmbra}
+                      disabled={
+                        isRegisteringUmbra ||
+                        umbraStatus === "loading" ||
+                        umbraStatus === "no-wallet"
+                      }
+                      whileTap={{ scale: 0.98 }}
+                      className="text-xs font-semibold px-3 h-7 rounded-full bg-[#121212] text-[#fafafa] disabled:opacity-50 whitespace-nowrap"
+                    >
+                      {isRegisteringUmbra ? "Working…" : "Enable"}
+                    </motion.button>
+                  )}
+                </div>
+                {!isUmbraRegistered && !isRegisteringUmbra && (
+                  <p className="text-[#121212]/40 text-[11px] mt-2">
+                    One-time setup; you&apos;ll sign ~4–5 wallet prompts. Most of the SOL staged is auto-refunded; net cost ~$0.60.
+                  </p>
+                )}
+                {umbraRegisterState.error && (
+                  <p className="text-[#CB0000] text-xs mt-2 break-words">
+                    {umbraRegisterState.error.split("\n")[0]}
+                  </p>
+                )}
+
+                {/* Shielded balance + pending rows (only when registered) */}
+                {isUmbraRegistered && (
+                  <div className="mt-4 pt-3 border-t border-[#121212]/5">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="flex-1 min-w-0">
+                        <p className="text-[#121212]/50 text-xs">
+                          Shielded balance
+                        </p>
+                        <p className="text-[#121212] text-sm font-medium">
+                          {umbraBalanceStatus === "needs-reveal"
+                            ? "Hidden"
+                            : umbraBalanceStatus === "loading"
+                              ? "Revealing..."
+                              : umbraBalanceStatus === "error"
+                                ? "—"
+                                : `${formatNumber(umbraBalanceUSDC || 0)} USDC`}
+                        </p>
+                      </div>
+                      {umbraBalanceStatus === "needs-reveal" ||
+                      umbraBalanceStatus === "loading" ? (
+                        <motion.button
+                          onClick={async () => {
+                            await refetchUmbraBalance();
+                            refetchUSDCBalance();
+                          }}
+                          disabled={umbraBalanceStatus === "loading"}
+                          whileTap={{ scale: 0.98 }}
+                          className="text-xs font-semibold px-3 h-7 rounded-full bg-[#121212] text-[#fafafa] disabled:opacity-50 whitespace-nowrap"
+                        >
+                          {umbraBalanceStatus === "loading"
+                            ? "Revealing…"
+                            : "Reveal"}
+                        </motion.button>
+                      ) : (
+                        <motion.button
+                          onClick={handleOpenUnlock}
+                          disabled={
+                            !umbraBalanceBaseUnits ||
+                            umbraBalanceBaseUnits === BigInt(0)
+                          }
+                          whileTap={{ scale: 0.98 }}
+                          className="text-xs font-semibold px-3 h-7 rounded-full bg-[#121212] text-[#fafafa] disabled:opacity-30 whitespace-nowrap"
+                        >
+                          Unlock
+                        </motion.button>
+                      )}
+                    </div>
+                    {umbraBalanceStatus === "needs-reveal" && (
+                      <p className="text-[#121212]/40 text-[11px] mt-2">
+                        Tap Reveal to view your shielded balance (one signature).
+                      </p>
+                    )}
+                    {umbraBalanceStatus === "error" && umbraBalanceError && (
+                      <p className="text-[#CB0000] text-xs mt-2 break-words">
+                        Balance fetch failed: {umbraBalanceError.split("\n")[0]}
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+
               {/* Stats */}
               <div className="space-y-2 mb-6 border-t border-[#121212]/10 pt-4">
                 <div className="flex justify-between">
@@ -507,6 +660,27 @@ export default function ProfilePage() {
           onClose={() => setShowWithdraw(false)}
           usdcBalance={usdcBalance || 0}
           getSignature={getSignature}
+        />
+      )}
+
+      {/* Unlock Modal — Umbra shielded → mainnet ATA. Modal shows the
+          combined balance (encrypted + filtered claimable); the unlock
+          flow does claim+settle+withdraw if there's anything to claim. */}
+      {showUnlock && (
+        <UnlockModal
+          isOpen={showUnlock}
+          onClose={() => {
+            setShowUnlock(false);
+            refetchUmbraBalance();
+            refetchUSDCBalance();
+          }}
+          availableUSDC={umbraBalanceUSDC || 0}
+          availableBaseUnits={umbraBalanceBaseUnits || BigInt(0)}
+          hasPending={umbraHasPending}
+          onSuccess={() => {
+            refetchUmbraBalance();
+            refetchUSDCBalance();
+          }}
         />
       )}
     </>

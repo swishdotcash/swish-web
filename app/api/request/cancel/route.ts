@@ -3,7 +3,7 @@ import { PublicKey } from "@solana/web3.js";
 import nacl from "tweetnacl";
 
 import { cancelRequest } from "@/lib/operations/request";
-import { SESSION_MESSAGE } from "@/lib/sponsor/prepareAndSubmitSend";
+import { REQUEST_SESSION_MESSAGE } from "@/lib/session-messages";
 
 export async function POST(request: NextRequest) {
   try {
@@ -45,8 +45,9 @@ export async function POST(request: NextRequest) {
     // Parse inputs
     const requesterPubKey = new PublicKey(requesterAddress);
 
-    // Verify session signature proves ownership of requesterAddress
-    const messageBytes = Buffer.from(SESSION_MESSAGE);
+    // Verify session signature proves ownership of requesterAddress.
+    // Cancel is protocol-agnostic — uses REQUEST_SESSION_MESSAGE.
+    const messageBytes = Buffer.from(REQUEST_SESSION_MESSAGE);
     const isValid = nacl.sign.detached.verify(
       messageBytes,
       sessionSigBytes,

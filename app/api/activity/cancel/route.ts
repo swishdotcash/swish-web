@@ -3,9 +3,12 @@ import { PublicKey } from "@solana/web3.js";
 import nacl from "tweetnacl";
 
 import { getActivity, updateActivityStatus } from "@/lib/database";
-
-// Session message for verification
-const SESSION_MESSAGE = "Privacy Money account sign in";
+import {
+  DEFAULT_PROVIDER_ID,
+  isProviderId,
+  type ProviderId,
+} from "@/lib/providers";
+import { getSessionMessageForProvider } from "@/lib/session-messages";
 
 export async function POST(request: NextRequest) {
   try {
@@ -28,9 +31,24 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Verify signature
+    // Get activity first — provider_id determines which session message
+    // to verify the sig against.
+    const activity = await getActivity(activityId);
+    if (!activity) {
+      return NextResponse.json(
+        { error: "Activity not found" },
+        { status: 404 }
+      );
+    }
+
+    const providerId: ProviderId = isProviderId(activity.provider_id ?? "")
+      ? (activity.provider_id as ProviderId)
+      : DEFAULT_PROVIDER_ID;
+
+    // Verify signature against the protocol-matching message
     const senderPubKey = new PublicKey(senderPublicKey);
-    const messageBytes = Buffer.from(SESSION_MESSAGE);
+    const sessionMessage = getSessionMessageForProvider(providerId);
+    const messageBytes = Buffer.from(sessionMessage);
     const signatureBytes = Buffer.from(sessionSignature, "base64");
 
     const isValid = nacl.sign.detached.verify(
@@ -43,15 +61,6 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(
         { error: "Invalid session signature" },
         { status: 401 }
-      );
-    }
-
-    // Get activity and verify ownership
-    const activity = await getActivity(activityId);
-    if (!activity) {
-      return NextResponse.json(
-        { error: "Activity not found" },
-        { status: 404 }
       );
     }
 

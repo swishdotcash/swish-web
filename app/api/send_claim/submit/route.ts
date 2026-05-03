@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from "next/server";
 import { Connection, PublicKey } from "@solana/web3.js";
 import nacl from "tweetnacl";
 
-import { SESSION_MESSAGE } from "@/lib/sponsor/prepareAndSubmitSend";
 import {
   DEFAULT_PROVIDER_ID,
   getProvider,
@@ -10,6 +9,7 @@ import {
   type ProviderId,
 } from "@/lib/providers";
 import { getActivity } from "@/lib/database";
+import { getSessionMessageForProvider } from "@/lib/session-messages";
 
 export async function POST(request: NextRequest) {
   try {
@@ -66,8 +66,10 @@ export async function POST(request: NextRequest) {
     // Parse inputs
     const senderPubKey = new PublicKey(senderPublicKey);
 
-    // Verify session signature proves ownership of senderPublicKey
-    const messageBytes = Buffer.from(SESSION_MESSAGE);
+    // Verify session signature against the protocol-matching message
+    // (provider_id stamped on the row at prepare time determines which).
+    const sessionMessage = getSessionMessageForProvider(providerId);
+    const messageBytes = Buffer.from(sessionMessage);
     const isValid = nacl.sign.detached.verify(
       messageBytes,
       sessionSigBytes,

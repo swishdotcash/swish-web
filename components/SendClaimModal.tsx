@@ -7,8 +7,11 @@ import { Modal } from "./Modal";
 import { Spinner } from "./Spinner";
 import { formatNumber } from "@/utils";
 import { useSendClaimTransaction } from "@/hooks/useSendClaimTransaction";
-import { useFee } from "@/hooks/useFee";
-import type { GetSessionSignature } from "@/hooks/useSessionSignature";
+import { useProtocolFee } from "@/hooks/useProtocolFee";
+import {
+  useSessionSignature,
+  type GetSessionSignature,
+} from "@/hooks/useSessionSignature";
 
 interface SendClaimModalProps {
   isOpen: boolean;
@@ -18,6 +21,12 @@ interface SendClaimModalProps {
 }
 
 type ModalState = "input" | "loading" | "success" | "error";
+// Send & Claim does not offer Umbra: the burner SC pattern adds 0.7%
+// claim fee + extra failure modes without giving the recipient any
+// privacy benefit (they get USDC in their ATA either way). Umbra stays
+// available for direct Send / Request fulfill, where it actually
+// changes the recipient's privacy posture.
+type ProviderChoice = "auto" | "privacy-cash" | "magicblock-per";
 
 export function SendClaimModal({
   isOpen,
@@ -31,15 +40,35 @@ export function SendClaimModal({
   const [passphrase, setPassphrase] = useState("");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [provider, setProvider] = useState<ProviderChoice>("auto");
   const { sendClaim } = useSendClaimTransaction();
-  const { baseFee, feePercent } = useFee();
+  // Each protocol's SC reclaim uses its own session message — the burner
+  // privkey is encrypted with the sender's protocol-specific signature so
+  // we must mint the right one when the user picks MB. PC's getSignature
+  // is the parent prop fallback for "auto" and "privacy-cash".
+  const { getSignature: getMbSessionSignature } =
+    useSessionSignature("magicblock-per");
 
   const numAmount = parseFloat(amount) || 0;
-  const partnerFee = baseFee + numAmount * feePercent;
+  // Per-protocol fee. SC has different fee structure than direct send:
+  //   PC: base + 0.35% (deducted from claim)
+  //   MB: gas only
+  //   Umbra: 0.7% on claim (protocol + relayer)
+  const { feeUSDC: partnerFee, breakdown: feeBreakdown } = useProtocolFee(
+    provider,
+    numAmount,
+    "send_claim"
+  );
   const total = numAmount - partnerFee;
 
   const handleProceed = async () => {
-    const session = await getSignature();
+    // Pick the right session-sig hook for the chosen provider. MB has
+    // its own session message; PC + auto fall back to the parent prop
+    // (which uses PC's hook).
+    const session =
+      provider === "magicblock-per"
+        ? await getMbSessionSignature()
+        : await getSignature();
     if (!session) {
       setErrorMessage("Signature required to continue");
       setState("error");
@@ -56,6 +85,7 @@ export function SendClaimModal({
         message: message.trim() || undefined,
         signature: session.signature,
         senderPublicKey: session.address,
+        providerId: provider,
       });
 
       setClaimLink(result.claimLink);
@@ -85,6 +115,7 @@ export function SendClaimModal({
     setPassphrase("");
     setErrorMessage(null);
     setCopied(false);
+    setProvider("auto");
     onClose();
   };
 
@@ -131,6 +162,42 @@ export function SendClaimModal({
               </div>
             </div>
 
+            {/* Privacy provider picker */}
+            <div className="mb-6">
+              <label className="text-sm text-[#121212]/50 mb-1 block">
+                Privacy protocol
+              </label>
+              <div className="flex gap-1.5 flex-wrap">
+                {(
+                  [
+                    "auto",
+                    "privacy-cash",
+                    "magicblock-per",
+                  ] as ProviderChoice[]
+                ).map((p) => {
+                  const label =
+                    p === "auto"
+                      ? "Auto"
+                      : p === "privacy-cash"
+                        ? "Privacy Cash"
+                        : "MagicBlock";
+                  return (
+                    <button
+                      key={p}
+                      onClick={() => setProvider(p)}
+                      className={`flex-1 min-w-[72px] h-9 rounded-full text-xs font-medium transition-all ${
+                        provider === p
+                          ? "bg-[#121212] text-[#fafafa]"
+                          : "bg-[#121212]/5 text-[#121212]/70 hover:bg-[#121212]/10"
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
             {/* Amount Details */}
             <div className="space-y-3 mb-8">
               <div className="flex justify-between">
@@ -138,7 +205,12 @@ export function SendClaimModal({
                 <span className="text-[#121212]">{formatNumber(numAmount)} USDC</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-[#121212]">Partner Fees</span>
+                <div>
+                  <span className="text-[#121212]">Partner Fees</span>
+                  <span className="text-[#121212]/40 text-xs ml-1">
+                    ({feeBreakdown})
+                  </span>
+                </div>
                 <span className="text-[#121212]">~{formatNumber(partnerFee)} USDC</span>
               </div>
               <div className="flex justify-between">

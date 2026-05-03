@@ -29,6 +29,8 @@
     "@solana/wallet-adapter-wallets": "^0.19.37",
     "@solana/web3.js": "^1.98.4",
     "@supabase/supabase-js": "^2.90.1",
+    "@umbra-privacy/sdk": "^4.0.0",
+    "@umbra-privacy/web-zk-prover": "^2.0.1",
     "bs58": "^6.0.0",
     "dotenv": "^17.2.3",
     "html5-qrcode": "^2.3.8",

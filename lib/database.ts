@@ -118,7 +118,20 @@ export async function getActivity(id: string): Promise<Activity | null> {
 export async function updateActivityStatus(
   id: string,
   status: ActivityStatus,
-  updates?: Partial<Pick<Activity, "tx_hash" | "claim_tx_hash" | "receiver_address" | "sender_address" | "provider_id">>
+  updates?: Partial<
+    Pick<
+      Activity,
+      | "tx_hash"
+      | "claim_tx_hash"
+      | "receiver_address"
+      | "sender_address"
+      | "provider_id"
+      | "burner_address"
+      | "encrypted_for_sender"
+      | "encrypted_for_receiver"
+      | "deposit_tx_hash"
+    >
+  >
 ): Promise<void> {
   const { error } = await getSupabase()
     .from("activity")
@@ -357,4 +370,68 @@ export async function getUserByPrivyId(privyId: string): Promise<User | null> {
   }
 
   return data;
+}
+
+// ============================================================
+// Umbra claimed-UTXO tracker
+// ============================================================
+//
+// Filters phantom (nullified) UTXOs that Umbra's scanner returns
+// alongside genuine unclaimed ones. See:
+// memory/project_umbra_claimed_utxo_tracker.md
+
+export interface UmbraUtxoRef {
+  treeIndex: number;
+  insertionIndex: number;
+}
+
+/**
+ * Returns the set of claimed UTXO IDs (`"treeIdx:insertionIdx"`) for a
+ * wallet. Used by the client to filter scanner output before display.
+ */
+export async function getClaimedUmbraUtxoIds(
+  walletAddress: string
+): Promise<string[]> {
+  const { data, error } = await getSupabase()
+    .from("umbra_claimed_utxos")
+    .select("tree_index, insertion_index")
+    .eq("wallet_address", walletAddress);
+
+  if (error) {
+    throw new Error(`Failed to fetch claimed UTXOs: ${error.message}`);
+  }
+  return (data ?? []).map(
+    (row: { tree_index: number; insertion_index: number }) =>
+      `${row.tree_index}:${row.insertion_index}`
+  );
+}
+
+/**
+ * Bulk-mark a list of UTXOs as claimed for the given wallet. Idempotent:
+ * duplicate `(wallet, tree_index, insertion_index)` rows are silently
+ * ignored via the primary key.
+ */
+export async function markUmbraUtxosClaimed(
+  walletAddress: string,
+  utxos: readonly UmbraUtxoRef[]
+): Promise<void> {
+  if (utxos.length === 0) return;
+
+  const rows = utxos.map((u) => ({
+    wallet_address: walletAddress,
+    tree_index: u.treeIndex,
+    insertion_index: u.insertionIndex,
+    claimed_at: new Date().toISOString(),
+  }));
+
+  const { error } = await getSupabase()
+    .from("umbra_claimed_utxos")
+    .upsert(rows, {
+      onConflict: "wallet_address,tree_index,insertion_index",
+      ignoreDuplicates: true,
+    });
+
+  if (error) {
+    throw new Error(`Failed to mark UTXOs claimed: ${error.message}`);
+  }
 }
