@@ -299,7 +299,7 @@ export default function ProfilePage() {
 
   return (
     <>
-      <main className="flex flex-col items-center p-4 w-full">
+      <main className="flex flex-col items-center p-4 w-full h-[stretch]">
         {/* Header: Address + X handle */}
         <div className="w-full max-w-[320px] mb-6">
           <div className="flex items-center justify-between gap-2 w-full">

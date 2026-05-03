@@ -66,9 +66,10 @@ export function estimateUmbraFee(amount: number, _flow: FlowKind): FeeEstimate {
  * Resolve the fee for a given protocol + flow + amount. PC requires the
  * current Pyth-derived base fee (caller fetches via useFee).
  *
- * For provider="auto" (no specific protocol picked), falls back to PC —
- * that's the auto-router default route. UI should note "may differ if
- * routed elsewhere."
+ * For provider="auto" (no specific protocol picked yet — typically before
+ * a receiver is entered), shows MB. With no receiver, Umbra is ineligible
+ * and the router picks MB if live; PC is only the fallback-of-fallback if
+ * MB is down.
  */
 export function estimateFee(
   provider: ProviderId | "auto",
@@ -78,9 +79,9 @@ export function estimateFee(
 ): FeeEstimate {
   switch (provider) {
     case "privacy-cash":
-    case "auto":
       return estimatePcFee(amount, pcBaseFeeUSDC);
     case "magicblock-per":
+    case "auto":
       return estimateMbFee(amount);
     case "umbra":
       return estimateUmbraFee(amount, flow);
