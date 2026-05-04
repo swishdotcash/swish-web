@@ -200,12 +200,12 @@ export async function buildDepositSPLTransaction(
     inputs = [firstUtxo, secondUtxo];
 
     const firstUtxoCommitment = await firstUtxo.getCommitment();
-    const firstUtxoMerkleProof = await fetchMerkleProof(firstUtxoCommitment, tokenInfo.name);
+    const firstUtxoMerkleProof = (await fetchMerkleProof([firstUtxoCommitment], tokenInfo.name)).proofs[0];
 
     let secondUtxoMerkleProof;
     if (secondUtxo.amount.gt(new BN(0))) {
       const secondUtxoCommitment = await secondUtxo.getCommitment();
-      secondUtxoMerkleProof = await fetchMerkleProof(secondUtxoCommitment, tokenInfo.name);
+      secondUtxoMerkleProof = (await fetchMerkleProof([secondUtxoCommitment], tokenInfo.name)).proofs[0];
     }
 
     inputMerklePathIndices = [
