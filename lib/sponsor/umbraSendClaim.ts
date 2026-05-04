@@ -1,33 +1,47 @@
 /**
- * Umbra Send & Claim — burner pattern (server-side).
+ * Umbra Send & Claim — flipped burner pattern.
  *
- * Mirrors the PC SC architecture (see prepareAndSubmitClaim.ts) but the
- * burner deposits a self-claimable UTXO into Umbra instead of a PC SPL
- * deposit. On claim/reclaim, the server uses the burner's keys (decrypted
- * via passphrase or session sig) to claim the UTXO into the burner's
- * encrypted balance, then withdraws to the recipient's / sender's mainnet
- * ATA.
+ * The sender does an Umbra Direct Send (client-side, 3 wallet sigs) to a
+ * fresh per-SC burner. Funds enter the Umbra pool with sender-side
+ * privacy. On recipient claim, the server uses the burner's keys
+ * (decrypted via passphrase or session sig) to claim the receiver-
+ * claimable UTXO into the burner's encrypted balance, withdraws to the
+ * burner's own ATA, then SPL-transfers to the recipient. From the
+ * recipient's POV it's a single SPL deposit landing in their wallet —
+ * no Umbra knowledge required.
+ *
+ * Flow split:
+ *   1. PREPARE (server): generate burner, register on Umbra, persist
+ *      activity row in `processing` state with burner key encrypted for
+ *      receiver (passphrase) and sender (session sig).
+ *   2. CLIENT (browser): Umbra Direct Send to burner address (3 sigs).
+ *   3. RECORD (server): client posts deposit signatures, server marks
+ *      activity `open` and returns the claim link.
+ *   4. CLAIM (server, recipient with passphrase): claim the burner's
+ *      ReceiverClaimable UTXO into encrypted balance → withdraw to
+ *      burner ATA → SPL transfer to recipient ATA.
+ *   5. RECLAIM (server, sender with session sig): same as claim but
+ *      destination is the sender.
  *
  * Cost (sponsor-paid):
  *   - Burner registration on Umbra (~$0.60 net, after SDK auto-reclaims
  *     computation rent via the default `reclaimComputationRent: true`)
- *   - Self-claimable deposit (~$0.32)
- *   - Total per Umbra SC: ~$0.96
+ *   - Claim + withdraw + SPL transfer at recipient time (~$0.001 gas)
+ *   - Total per Umbra SC: ~$0.96 sponsor + 0.7% recipient claim fee
+ *     (intrinsic to Umbra's protocol).
  *
- * For why we sponsor instead of using a single hub or burner pool, see
- * the conversation 2026-05-01 — burner-per-SC keeps per-SC isolation
- * (no drift on a shared balance) at a price the sponsor can absorb until
- * Umbra ships a close-ix or sponsor co-signing.
+ * Why we don't use a single permanent vault (SUV): per-SC burner keeps
+ * isolation (no shared-balance drift) and is simpler to reason about
+ * for v1. SUV is on the post-hackathon roadmap (see SUV memory).
  */
 
 import {
   Connection,
   Keypair,
   PublicKey,
-  SystemProgram,
   Transaction,
-  TransactionMessage,
   VersionedTransaction,
+  TransactionMessage,
 } from "@solana/web3.js";
 import {
   getAccount,
@@ -40,7 +54,7 @@ import {
   getClaimableUtxoScannerFunction,
   getEncryptedBalanceQuerierFunction,
   getEncryptedBalanceToPublicBalanceDirectWithdrawerFunction,
-  getSelfClaimableUtxoToEncryptedBalanceClaimerFunction,
+  getReceiverClaimableUtxoToEncryptedBalanceClaimerFunction,
 } from "@umbra-privacy/sdk";
 
 import { TOKEN_MINTS, TokenType } from "../privacycash/tokens";
@@ -61,11 +75,8 @@ import {
 import { loadSponsorWallet } from "./sponsorWallet";
 import {
   createBurner,
-  depositToSelfClaimable,
   ensureBurnerSol,
   registerBurnerOnUmbra,
-  buildSenderToBurnerTransferTx,
-  submitSenderToBurnerTransfer,
   sweepBurnerSol,
 } from "./umbraBurner";
 import {
@@ -82,11 +93,10 @@ const TOKEN_DECIMALS: Record<TokenType, number> = {
 };
 
 // ============================================================
-// PREPARE
+// PREPARE — server-side burner provisioning
 // ============================================================
 
-export interface PrepareUmbraSendClaimParams {
-  connection: Connection;
+export interface PrepareUmbraScBurnerParams {
   senderPublicKey: PublicKey;
   sessionSignature: Uint8Array;
   amount: number;
@@ -95,21 +105,23 @@ export interface PrepareUmbraSendClaimParams {
   providerId: string;
 }
 
-export interface PrepareUmbraSendClaimResult {
+export interface PrepareUmbraScBurnerResult {
   activityId: string;
-  unsignedDepositTx: string;
-  lastValidBlockHeight: number;
-  passphrase: string;
   burnerAddress: string;
-  estimatedFeeLamports: number;
-  estimatedFeeSOL: number;
+  passphrase: string;
 }
 
-export async function prepareUmbraSendClaim(
-  params: PrepareUmbraSendClaimParams
-): Promise<PrepareUmbraSendClaimResult> {
+/**
+ * Generate a fresh burner, register it on Umbra (sponsored), and
+ * persist an activity row in `processing` state. Client will then do
+ * an Umbra Direct Send to the returned burner address. The burner
+ * key is encrypted twice — for the receiver via passphrase, and for
+ * the sender via session signature (for reclaim).
+ */
+export async function prepareUmbraScBurner(
+  params: PrepareUmbraScBurnerParams
+): Promise<PrepareUmbraScBurnerResult> {
   const {
-    connection,
     senderPublicKey,
     sessionSignature,
     amount,
@@ -121,9 +133,6 @@ export async function prepareUmbraSendClaim(
   if (token !== "USDC") {
     throw new Error("Umbra Send & Claim only supports USDC for v1");
   }
-
-  const baseUnits = BigInt(Math.floor(amount * 10 ** TOKEN_DECIMALS[token]));
-  const mint = TOKEN_MINTS[token];
 
   const burner = createBurner();
   const passphrase = generatePassphrase();
@@ -138,21 +147,28 @@ export async function prepareUmbraSendClaim(
     sessionSignature
   );
 
-  const transfer = await buildSenderToBurnerTransferTx({
-    connection,
-    senderPubkey: senderPublicKey,
-    burnerPubkey: burner.keypair.publicKey,
-    amountBaseUnits: baseUnits,
-    mint,
-  });
+  // Top up burner SOL + register on Umbra. This is the bulk of the
+  // ~$0.60 sponsor cost. Doing it here (vs at record time) means the
+  // burner is ready to receive a Direct Send the moment the client
+  // gets the address back.
+  const rpcUrl = process.env.RPC_URL;
+  if (!rpcUrl) throw new Error("RPC_URL not configured");
+  const connection = new Connection(rpcUrl, "confirmed");
 
+  await ensureBurnerSol(connection, burner.keypair.publicKey);
+  await registerBurnerOnUmbra(burner.keypair);
+
+  const mint = TOKEN_MINTS[token];
   const activity = await createActivity({
     type: "send_claim",
     sender_address: senderPublicKey.toBase58(),
     receiver_address: null,
     amount,
     token_address: mint.toBase58(),
-    status: "open",
+    // Stays in `processing` until the client posts back the deposit
+    // signatures via /api/umbra/sc/record. Recipients can't claim
+    // a `processing` row.
+    status: "processing",
     message: message || null,
     tx_hash: null,
     burner_address: burner.address,
@@ -163,36 +179,79 @@ export async function prepareUmbraSendClaim(
 
   return {
     activityId: activity.id,
-    unsignedDepositTx: transfer.unsignedTxBase64,
-    lastValidBlockHeight: transfer.lastValidBlockHeight,
-    passphrase,
     burnerAddress: burner.address,
-    // Sponsor pays the SPL transfer fee. Surface ~5000 lamports for UI parity
-    // with PC.
-    estimatedFeeLamports: 5000,
-    estimatedFeeSOL: 0.000005,
+    passphrase,
   };
 }
 
 // ============================================================
-// SUBMIT (sender's session signature required to decrypt burner key)
+// RECORD — client confirms deposit completed
 // ============================================================
 
-export interface SubmitUmbraSendClaimParams {
-  connection: Connection;
-  signedDepositTx: string;
+export interface RecordUmbraScDepositParams {
   activityId: string;
   senderPublicKey: PublicKey;
-  sessionSignature: Uint8Array;
-  lastValidBlockHeight?: number;
+  createUtxoSignature: string;
+  createProofAccountSignature: string;
+  closeProofAccountSignature?: string;
 }
 
-export interface SubmitUmbraSendClaimResult {
+export interface RecordUmbraScDepositResult {
   activityId: string;
-  depositTx: string; // sender→burner SPL transfer signature
-  withdrawTx: string; // Umbra createUtxo signature
   claimLink: string;
   burnerAddress: string;
+}
+
+/**
+ * After the client completes the Umbra Direct Send to the burner,
+ * mark the activity row as `open` (claimable by recipient) and
+ * return the claim link. We don't independently verify the deposit
+ * landed — at worst the recipient's claim will fail when scanning
+ * for the UTXO, which they can retry. No funds at stake here since
+ * the UTXO is on-chain regardless.
+ */
+export async function recordUmbraScDeposit(
+  params: RecordUmbraScDepositParams
+): Promise<RecordUmbraScDepositResult> {
+  const {
+    activityId,
+    senderPublicKey,
+    createUtxoSignature,
+    createProofAccountSignature,
+  } = params;
+
+  const activity = await getActivity(activityId);
+  if (!activity) throw new Error("Activity not found");
+  if (activity.type !== "send_claim") {
+    throw new Error("Not a send_claim activity");
+  }
+  if (activity.status !== "processing") {
+    throw new Error(`Activity is in ${activity.status} state`);
+  }
+  if (activity.sender_address !== senderPublicKey.toBase58()) {
+    throw new Error("Not authorized to record this send");
+  }
+  if (!activity.burner_address) {
+    throw new Error("Activity missing burner data");
+  }
+
+  // tx_hash = createUtxo signature (canonical Umbra deposit
+  // signature); deposit_tx_hash captures the proof-account staging tx
+  // for audit trail.
+  await updateActivityStatus(activityId, "open", {
+    tx_hash: createUtxoSignature,
+    deposit_tx_hash: createProofAccountSignature,
+    provider_id: "umbra",
+  });
+
+  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || "https://swish.cash";
+  const claimLink = `${baseUrl}/c/${activityId}`;
+
+  return {
+    activityId,
+    claimLink,
+    burnerAddress: activity.burner_address,
+  };
 }
 
 // ============================================================
@@ -263,7 +322,7 @@ export async function claimUmbraSendClaim(
     });
 
     await updateActivityStatus(activityId, "settled", {
-      tx_hash: claimTx,
+      claim_tx_hash: claimTx,
       receiver_address: receiverAddress,
       provider_id: "umbra",
     });
@@ -365,7 +424,7 @@ export async function reclaimUmbraSendClaim(
 }
 
 // ============================================================
-// SHARED — drive Umbra claim → recipient's mainnet ATA
+// SHARED — drive Umbra claim → withdraw to burner ATA → SPL transfer
 // ============================================================
 
 interface RunUmbraClaimArgs {
@@ -376,19 +435,26 @@ interface RunUmbraClaimArgs {
 }
 
 /**
- * Two-step Umbra claim → recipient's mainnet ATA:
- *   1. Burner scans for self-claimable UTXOs at its address (ephemeral
- *      bucket). Claims them into burner's encrypted balance.
- *   2. Burner withdraws encrypted balance → recipient's mainnet ATA in a
- *      single tx (Umbra's direct withdrawer accepts any destination).
+ * Three-step recipient claim:
+ *   1. Burner scans for ReceiverClaimable UTXOs at its address (the
+ *      sender's Umbra Direct Send landed here). Claims them into
+ *      burner's encrypted balance — fires the 0.7% Umbra protocol+
+ *      relayer claim fee, settled via Arcium MPC (~10-15s).
+ *   2. Burner withdraws encrypted balance → burner's own ATA
+ *      (Umbra direct withdrawer, 0% fee).
+ *   3. Sponsor-paid SPL transfer from burner ATA → recipient's
+ *      mainnet ATA, creating the recipient ATA if missing.
  *
- * Burner needs SOL on hand for tx fees — we top up at the start and sweep
- * any leftover at the end. Sponsor pays.
+ * Returns the SPL transfer signature (canonical "money landed in
+ * recipient's wallet" signature).
+ *
+ * Burner needs SOL on hand for tx fees — top up at start, sweep
+ * leftover at end. Sponsor pays everything.
  */
 async function runUmbraClaimToRecipient(
   args: RunUmbraClaimArgs
 ): Promise<string> {
-  const { connection, burnerKeypair, recipientAddress } = args;
+  const { connection, burnerKeypair, recipientAddress, sponsorKeypair } = args;
 
   // Top up burner SOL for the claim + withdraw txs.
   await ensureBurnerSol(connection, burnerKeypair.publicKey);
@@ -397,47 +463,47 @@ async function runUmbraClaimToRecipient(
   const client = await getServerUmbraClient({ signer });
   const suite = getUmbraProverSuite();
 
-  // Step 1: scan claimable UTXOs at burner's address.
-  // Scanner takes (treeIndex: U32, startInsertionIndex: U32, endInsertionIndex?: U32) — bigint args.
+  // Step 1a: scan claimable UTXOs at burner's address. Sender's
+  // Direct Send landed in the `publicReceived` bucket (public-balance
+  // deposit sent to us by another party).
   const scanner = getClaimableUtxoScannerFunction({ client });
   const scanResult = await scanner(BigInt(0) as any, BigInt(0) as any);
-  // Our deposit was via getPublicBalanceToSelfClaimableUtxoCreatorFunction,
-  // so UTXOs land in the `publicSelfBurnable` bucket.
-  const selfClaimableUtxos = scanResult.publicSelfBurnable;
+  const receiverClaimableUtxos = scanResult.publicReceived;
 
-  if (selfClaimableUtxos.length === 0) {
+  if (receiverClaimableUtxos.length === 0) {
     throw new Error(
-      "No self-claimable UTXOs found at burner address. Deposit may not have settled yet."
+      "No receiver-claimable UTXOs found at burner address. Sender's deposit may not have settled yet."
     );
   }
 
-  // Step 2: claim self-claimable UTXOs into burner's encrypted balance.
-  // Requires zkProver + relayer + fetchBatchMerkleProof. The relayer is
-  // constructed once and reused across claims. fetchBatchMerkleProof
-  // defaults from client (uses the indexer config).
+  // Step 1b: claim receiver-claimable UTXOs into burner's encrypted
+  // balance. 0.7% protocol + relayer fee fires here. Relayer is
+  // constructed once and reused.
   const relayer = await getServerUmbraRelayer();
-  const claimer = getSelfClaimableUtxoToEncryptedBalanceClaimerFunction(
+  const claimer = getReceiverClaimableUtxoToEncryptedBalanceClaimerFunction(
     { client },
     {
-      zkProver:
-        suite.claimReceiverClaimableIntoEncryptedBalance as any,
+      zkProver: suite.claimReceiverClaimableIntoEncryptedBalance as any,
       relayer: relayer as any,
       fetchBatchMerkleProof: (client as any).fetchBatchMerkleProof,
     } as any
   );
-  await claimer(selfClaimableUtxos as any);
+  await claimer(receiverClaimableUtxos as any);
 
-  // Step 3: poll for Arcium MPC to credit the burner's encrypted balance.
-  // The relayer-submitted claim tx lands quickly, but Arcium MPC takes
-  // ~10-15s to finalize the encrypted-balance update. Without polling,
-  // step 4 fires before the credit lands and the withdraw fails with
-  // "amount > available". Poll every 2s for up to 35s.
+  // Step 2: poll for Arcium MPC to credit the burner's encrypted
+  // balance. Relayer-submitted claim tx lands quickly; Arcium takes
+  // ~10-15s to finalize the encrypted-balance update. Without this
+  // poll, step 3 fires before the credit lands and withdraw fails
+  // with "amount > available".
   const POLL_INTERVAL_MS = 2_000;
   const POLL_TIMEOUT_MS = 35_000;
   const querier = getEncryptedBalanceQuerierFunction({ client });
   const start = Date.now();
   let availableBaseUnits: bigint = BigInt(0);
-  while (availableBaseUnits === BigInt(0) && Date.now() - start < POLL_TIMEOUT_MS) {
+  while (
+    availableBaseUnits === BigInt(0) &&
+    Date.now() - start < POLL_TIMEOUT_MS
+  ) {
     const balanceMap = await querier([USDC_MINT as any]);
     const usdcResult = balanceMap.get(USDC_MINT as any);
     if (usdcResult && (usdcResult as any).state === "shared") {
@@ -453,21 +519,36 @@ async function runUmbraClaimToRecipient(
     );
   }
 
-  // Step 4: withdraw encrypted balance → recipient's mainnet ATA.
-  // Use the actual settled amount (Umbra fees may have shaved it slightly).
+  // Step 3: withdraw encrypted balance → burner's own ATA. 0% fee.
+  // Use the actual settled amount (Umbra's claim fee already came out).
+  const burnerAta = await getAssociatedTokenAddress(
+    new PublicKey(USDC_MINT),
+    burnerKeypair.publicKey
+  );
   const withdraw = getEncryptedBalanceToPublicBalanceDirectWithdrawerFunction(
     { client }
   );
-  const withdrawSig = await withdraw(
-    recipientAddress as any,
+  await withdraw(
+    burnerKeypair.publicKey.toBase58() as any,
     USDC_MINT as any,
     availableBaseUnits as any
   );
 
+  // Step 4: SPL transfer from burner ATA → recipient ATA. Sponsor
+  // pays gas + creates recipient ATA if missing. This is the tx the
+  // recipient sees as "money arrived in my wallet".
+  const transferSig = await splTransferToRecipient({
+    connection,
+    burnerKeypair,
+    sponsorKeypair,
+    recipientAddress,
+    amountBaseUnits: availableBaseUnits,
+  });
+
   // Best-effort sweep leftover SOL back to sponsor.
   await sweepBurnerSol(connection, burnerKeypair).catch(() => null);
 
-  return withdrawSig.toString();
+  return transferSig;
 }
 
 // Cached relayer instance (constructor is cheap but caching avoids repeats).
@@ -476,106 +557,92 @@ async function getServerUmbraRelayer() {
   if (cachedRelayer) return cachedRelayer;
   const { getUmbraRelayer } = await import("@umbra-privacy/sdk");
   const apiEndpoint =
-    process.env.UMBRA_RELAYER_URL ||
-    "https://relayer.api.umbraprivacy.com";
+    process.env.UMBRA_RELAYER_URL || "https://relayer.api.umbraprivacy.com";
   cachedRelayer = getUmbraRelayer({ apiEndpoint });
   return cachedRelayer;
 }
 
 // ============================================================
-// SUBMIT — implementation
+// SPL transfer helper — burner ATA → recipient ATA
 // ============================================================
 
-export async function submitUmbraSendClaim(
-  params: SubmitUmbraSendClaimParams
-): Promise<SubmitUmbraSendClaimResult> {
+interface SplTransferArgs {
+  connection: Connection;
+  burnerKeypair: Keypair;
+  sponsorKeypair: Keypair;
+  recipientAddress: string;
+  amountBaseUnits: bigint;
+}
+
+/**
+ * Builds and sends a sponsor-paid SPL transfer from burner ATA to
+ * recipient ATA. Creates the recipient ATA on the fly if missing
+ * (sponsor pays the rent ~0.002 SOL).
+ *
+ * Sponsor is fee payer. Burner signs as token authority. No user
+ * signature involved (this is server-side at recipient claim time).
+ */
+async function splTransferToRecipient(args: SplTransferArgs): Promise<string> {
   const {
     connection,
-    signedDepositTx,
-    activityId,
-    senderPublicKey,
-    sessionSignature,
-  } = params;
+    burnerKeypair,
+    sponsorKeypair,
+    recipientAddress,
+    amountBaseUnits,
+  } = args;
 
-  const activity = await getActivity(activityId);
-  if (!activity) throw new Error("Activity not found");
-  if (activity.type !== "send_claim") {
-    throw new Error("Not a send_claim activity");
-  }
-  if (activity.status !== "open") {
-    throw new Error(`Activity is already ${activity.status}`);
-  }
-  if (activity.sender_address !== senderPublicKey.toBase58()) {
-    throw new Error("Not authorized to submit this send");
-  }
-  if (!activity.burner_address || !activity.encrypted_for_sender) {
-    throw new Error("Activity missing burner data");
-  }
+  const mint = new PublicKey(USDC_MINT);
+  const recipient = new PublicKey(recipientAddress);
 
-  // Decrypt burner privkey using sender's session signature (same as PC SC).
-  const burnerSecretKey = decryptWithSessionSignature(
-    activity.encrypted_for_sender as PassphraseEncryptedPayload,
-    sessionSignature
-  );
-  const burnerKeypair = Keypair.fromSecretKey(burnerSecretKey);
-  if (burnerKeypair.publicKey.toBase58() !== activity.burner_address) {
-    throw new Error("Burner key mismatch");
-  }
+  const burnerAta = await getAssociatedTokenAddress(mint, burnerKeypair.publicKey);
+  const recipientAta = await getAssociatedTokenAddress(mint, recipient);
 
-  await updateActivityStatus(activityId, "processing");
+  const instructions: any[] = [];
 
+  // Create recipient ATA if missing — sponsor pays rent.
+  let recipientAtaExists = true;
   try {
-    // Step 1: submit user-signed sender→burner SPL transfer.
-    const depositTx = await submitSenderToBurnerTransfer(
-      connection,
-      signedDepositTx,
-      params.lastValidBlockHeight ?? 0
-    );
-
-    // Step 2: ensure burner has SOL for registration + deposit txs.
-    await ensureBurnerSol(connection, burnerKeypair.publicKey);
-
-    // Step 3: register burner on Umbra. Required for self-claimable
-    // (burner needs an EncryptedUserAccount to be the receiver of its own
-    // self-claimable UTXO). One-time per burner. SDK auto-reclaims
-    // computation rent via default `reclaimComputationRent: true`, so net
-    // cost is ~0.003 SOL (~$0.60).
-    await registerBurnerOnUmbra(burnerKeypair);
-
-    // Step 4: burner deposits self-claimable UTXO. UTXO is locked to the
-    // burner's commitment; recipient claims it via passphrase-decrypted
-    // burner key.
-    const baseUnits = BigInt(
-      Math.floor(activity.amount * 10 ** TOKEN_DECIMALS["USDC"])
-    );
-    const deposit = await depositToSelfClaimable(burnerKeypair, baseUnits);
-
-    // Step 5: best-effort sweep leftover SOL back to sponsor.
-    await sweepBurnerSol(connection, burnerKeypair).catch(() => null);
-
-    // Step 6: mark settled. tx_hash = the createUtxo signature (canonical
-    // Umbra deposit signature).
-    await updateActivityStatus(activityId, "settled", {
-      tx_hash: deposit.createUtxoSignature,
-      deposit_tx_hash: depositTx,
-      provider_id: "umbra",
-    });
-
-    // Build claim link from the activity ID.
-    const baseUrl =
-      process.env.NEXT_PUBLIC_APP_URL || "https://swish.cash";
-    const claimLink = `${baseUrl}/c/${activityId}`;
-
-    return {
-      activityId,
-      depositTx,
-      withdrawTx: deposit.createUtxoSignature,
-      claimLink,
-      burnerAddress: activity.burner_address,
-    };
+    await getAccount(connection, recipientAta);
   } catch (err) {
-    console.error("Umbra send_claim submit failed:", err);
-    await updateActivityStatus(activityId, "cancelled");
-    throw err;
+    if (err instanceof TokenAccountNotFoundError) {
+      recipientAtaExists = false;
+    } else {
+      throw err;
+    }
   }
+  if (!recipientAtaExists) {
+    instructions.push(
+      createAssociatedTokenAccountInstruction(
+        sponsorKeypair.publicKey,
+        recipientAta,
+        recipient,
+        mint
+      )
+    );
+  }
+
+  instructions.push(
+    createTransferInstruction(
+      burnerAta,
+      recipientAta,
+      burnerKeypair.publicKey,
+      amountBaseUnits
+    )
+  );
+
+  const { blockhash } = await connection.getLatestBlockhash("confirmed");
+  const messageV0 = new TransactionMessage({
+    payerKey: sponsorKeypair.publicKey,
+    recentBlockhash: blockhash,
+    instructions,
+  }).compileToV0Message();
+
+  const tx = new VersionedTransaction(messageV0);
+  tx.sign([sponsorKeypair, burnerKeypair]);
+
+  const sig = await connection.sendRawTransaction(tx.serialize(), {
+    preflightCommitment: "confirmed",
+  });
+  await connection.confirmTransaction(sig, "confirmed");
+  return sig;
 }

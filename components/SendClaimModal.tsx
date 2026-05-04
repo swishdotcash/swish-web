@@ -8,6 +8,8 @@ import { Spinner } from "./Spinner";
 import { formatNumber } from "@/utils";
 import { useSendClaimTransaction } from "@/hooks/useSendClaimTransaction";
 import { useProtocolFee } from "@/hooks/useProtocolFee";
+import { useUmbraSendClaim } from "@/hooks/useUmbraSendClaim";
+import { useUmbraStatus } from "@/hooks/useUmbraStatus";
 import {
   useSessionSignature,
   type GetSessionSignature,
@@ -21,12 +23,11 @@ interface SendClaimModalProps {
 }
 
 type ModalState = "input" | "loading" | "success" | "error";
-// Send & Claim does not offer Umbra: the burner SC pattern adds 0.7%
-// claim fee + extra failure modes without giving the recipient any
-// privacy benefit (they get USDC in their ATA either way). Umbra stays
-// available for direct Send / Request fulfill, where it actually
-// changes the recipient's privacy posture.
-type ProviderChoice = "auto" | "privacy-cash" | "magicblock-per";
+// Umbra SC uses the flipped burner pattern (sender does Umbra Direct
+// Send to a per-SC burner client-side; server claims + SPL transfers
+// to recipient at claim time). Sender Umbra registration is required
+// — gated below the same way SendModal gates direct Send.
+type ProviderChoice = "auto" | "privacy-cash" | "magicblock-per" | "umbra";
 
 export function SendClaimModal({
   isOpen,
@@ -42,12 +43,17 @@ export function SendClaimModal({
   const [copied, setCopied] = useState(false);
   const [provider, setProvider] = useState<ProviderChoice>("auto");
   const { sendClaim } = useSendClaimTransaction();
+  const { sendClaim: umbraSendClaim, state: umbraSendClaimState } =
+    useUmbraSendClaim();
+  const { status: umbraStatus } = useUmbraStatus();
   // Each protocol's SC reclaim uses its own session message — the burner
   // privkey is encrypted with the sender's protocol-specific signature so
-  // we must mint the right one when the user picks MB. PC's getSignature
-  // is the parent prop fallback for "auto" and "privacy-cash".
+  // we must mint the right one when the user picks MB or Umbra. PC's
+  // getSignature is the parent prop fallback for "auto" and "privacy-cash".
   const { getSignature: getMbSessionSignature } =
     useSessionSignature("magicblock-per");
+  const { getSignature: getUmbraSessionSignature } =
+    useSessionSignature("umbra");
 
   const numAmount = parseFloat(amount) || 0;
   // Per-protocol fee. SC has different fee structure than direct send:
@@ -62,13 +68,15 @@ export function SendClaimModal({
   const total = numAmount - partnerFee;
 
   const handleProceed = async () => {
-    // Pick the right session-sig hook for the chosen provider. MB has
-    // its own session message; PC + auto fall back to the parent prop
-    // (which uses PC's hook).
+    // Pick the right session-sig hook for the chosen provider. MB and
+    // Umbra each have their own session message; PC + auto fall back to
+    // the parent prop (which uses PC's hook).
     const session =
       provider === "magicblock-per"
         ? await getMbSessionSignature()
-        : await getSignature();
+        : provider === "umbra"
+          ? await getUmbraSessionSignature()
+          : await getSignature();
     if (!session) {
       setErrorMessage("Signature required to continue");
       setState("error");
@@ -79,6 +87,23 @@ export function SendClaimModal({
     setErrorMessage(null);
 
     try {
+      // Umbra SC bypasses the standard prepare/submit flow. The deposit
+      // runs client-side via useUmbraSendClaim (3 wallet sigs after the
+      // session sig prompt). Server pre-registers the burner; client
+      // posts back deposit signatures to finalize.
+      if (provider === "umbra") {
+        const result = await umbraSendClaim({
+          amount: numAmount,
+          message: message.trim() || undefined,
+          sessionSignature: session.signature,
+          senderPublicKey: session.address,
+        });
+        setClaimLink(result.claimLink);
+        setPassphrase(result.passphrase);
+        setState("success");
+        return;
+      }
+
       const result = await sendClaim({
         amount: numAmount,
         token: "USDC",
@@ -173,6 +198,7 @@ export function SendClaimModal({
                     "auto",
                     "privacy-cash",
                     "magicblock-per",
+                    "umbra",
                   ] as ProviderChoice[]
                 ).map((p) => {
                   const label =
@@ -180,15 +206,33 @@ export function SendClaimModal({
                       ? "Auto"
                       : p === "privacy-cash"
                         ? "Privacy Cash"
-                        : "MagicBlock";
+                        : p === "magicblock-per"
+                          ? "MagicBlock"
+                          : "Umbra";
+                  // Umbra SC requires the sender to be Umbra-registered
+                  // (deposit runs client-side via Direct Send to a per-SC
+                  // burner). Match the gating used in SendModal.
+                  const senderUmbraDisabled =
+                    p === "umbra" && umbraStatus !== "registered";
                   return (
                     <button
                       key={p}
-                      onClick={() => setProvider(p)}
+                      onClick={() => {
+                        if (senderUmbraDisabled) return;
+                        setProvider(p);
+                      }}
+                      disabled={senderUmbraDisabled}
+                      title={
+                        senderUmbraDisabled
+                          ? "Enable Umbra in your profile to use Umbra Send & Claim"
+                          : undefined
+                      }
                       className={`flex-1 min-w-[72px] h-9 rounded-full text-xs font-medium transition-all ${
                         provider === p
                           ? "bg-[#121212] text-[#fafafa]"
-                          : "bg-[#121212]/5 text-[#121212]/70 hover:bg-[#121212]/10"
+                          : senderUmbraDisabled
+                            ? "bg-[#121212]/5 text-[#121212]/30 cursor-not-allowed"
+                            : "bg-[#121212]/5 text-[#121212]/70 hover:bg-[#121212]/10"
                       }`}
                     >
                       {label}
@@ -196,6 +240,12 @@ export function SendClaimModal({
                   );
                 })}
               </div>
+              {provider === "umbra" && umbraStatus === "registered" && (
+                <p className="text-xs text-[#121212]/50 mt-2">
+                  Umbra Send & Claim uses your shielded send pattern — you&apos;ll
+                  see ~3 wallet prompts after this.
+                </p>
+              )}
             </div>
 
             {/* Amount Details */}
@@ -239,7 +289,19 @@ export function SendClaimModal({
             className="flex flex-col items-center justify-center py-12"
           >
             <Spinner size={48} color="#121212" />
-            <p className="mt-4 text-[#121212]/70">Generating claim link...</p>
+            <p className="mt-4 text-[#121212]/70">
+              {provider === "umbra"
+                ? umbraSendClaimState.stage === "preparing-burner"
+                  ? "Setting up burner on Umbra..."
+                  : umbraSendClaimState.stage === "checking-burner"
+                    ? "Waiting for burner to register (Arcium MPC)..."
+                    : umbraSendClaimState.stage === "depositing"
+                      ? "Sign each prompt to send privately (~3 prompts)"
+                      : umbraSendClaimState.stage === "recording"
+                        ? "Finalizing claim link..."
+                        : "Generating claim link..."
+                : "Generating claim link..."}
+            </p>
           </motion.div>
         )}
 
