@@ -395,18 +395,16 @@ export async function sponsoredDepositSPL({
     inputs = [firstUtxo, secondUtxo];
 
     const firstUtxoCommitment = await firstUtxo.getCommitment();
-    const firstUtxoMerkleProof = await fetchMerkleProof(
-      firstUtxoCommitment,
-      token.name
-    );
+    const firstUtxoMerkleProof = (
+      await fetchMerkleProof([firstUtxoCommitment], token.name)
+    ).proofs[0];
 
     let secondUtxoMerkleProof;
     if (secondUtxo.amount.gt(new BN(0))) {
       const secondUtxoCommitment = await secondUtxo.getCommitment();
-      secondUtxoMerkleProof = await fetchMerkleProof(
-        secondUtxoCommitment,
-        token.name
-      );
+      secondUtxoMerkleProof = (
+        await fetchMerkleProof([secondUtxoCommitment], token.name)
+      ).proofs[0];
     }
 
     inputMerklePathIndices = [
@@ -743,12 +741,12 @@ export async function sponsoredDepositSOL({
     inputs = [firstUtxo, secondUtxo];
 
     const firstUtxoCommitment = await firstUtxo.getCommitment();
-    const firstUtxoMerkleProof = await fetchMerkleProof(firstUtxoCommitment);
+    const firstUtxoMerkleProof = (await fetchMerkleProof([firstUtxoCommitment])).proofs[0];
 
     let secondUtxoMerkleProof;
     if (secondUtxo.amount.gt(new BN(0))) {
       const secondUtxoCommitment = await secondUtxo.getCommitment();
-      secondUtxoMerkleProof = await fetchMerkleProof(secondUtxoCommitment);
+      secondUtxoMerkleProof = (await fetchMerkleProof([secondUtxoCommitment])).proofs[0];
     }
 
     inputMerklePathIndices = [
