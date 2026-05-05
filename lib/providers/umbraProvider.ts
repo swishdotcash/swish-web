@@ -1,18 +1,19 @@
 /**
  * Umbra provider.
  *
- * Direct Send + Request fulfill go through the burner pattern:
- *   1. Server creates fresh burner per send
- *   2. Sender signs ONE SPL transfer (sender ATA → burner ATA), sponsor
- *      pays SOL fee, sponsor pre-signs as fee payer
- *   3. Server runs Umbra registration + receiver-claimable deposit as
- *      the burner (server-side, sponsored SOL fees)
- *   4. UTXO lands locked to recipient's commitment; recipient claims via
- *      their own Umbra account independently
+ * Direct Send + Request fulfill: client-side Umbra Direct Send via
+ * `useUmbraSend` / `useUmbraFulfill`. The provider's `prepare`/`submit`
+ * methods here are kept for the burner-pattern fallback path but are
+ * no longer the primary route.
  *
- * Send & Claim methods (prepareSendClaim / submitSendClaim / claim /
- * reclaim) throw "not implemented" — coming in a future commit once we
- * verify the Umbra relayer + claim flow.
+ * Send & Claim: flipped burner pattern (since 2026-05-03). Sender
+ * does Umbra Direct Send to a per-SC burner client-side. Server
+ * pre-registers burner via /api/umbra/sc/prepare and finalises via
+ * /api/umbra/sc/record. Provider's `prepareSendClaim` / `submitSendClaim`
+ * throw — clients dispatch through the dedicated endpoints. `claim` and
+ * `reclaim` are still routed through this provider (the standard
+ * `/api/send_claim/[id]` and `/reclaim` routes dispatch from the
+ * activity's stamped provider_id).
  *
  * See [Umbra architecture decision](memory/project_umbra_architecture_decision.md).
  */
@@ -25,9 +26,7 @@ import {
 } from "../sponsor/umbraSend";
 import {
   claimUmbraSendClaim,
-  prepareUmbraSendClaim,
   reclaimUmbraSendClaim,
-  submitUmbraSendClaim,
 } from "../sponsor/umbraSendClaim";
 import type {
   ClaimInput,
@@ -131,46 +130,19 @@ export const umbraProvider: PrivacySendProvider = {
   },
 
   async prepareSendClaim(
-    input: PrepareSendClaimInput
+    _input: PrepareSendClaimInput
   ): Promise<PrepareSendClaimOutput> {
-    const result = await prepareUmbraSendClaim({
-      connection: input.connection,
-      senderPublicKey: input.senderPublicKey,
-      sessionSignature: input.sessionSignature,
-      amount: input.amount,
-      token: input.token,
-      message: input.message,
-      providerId: this.id,
-    });
-    return {
-      activityId: result.activityId,
-      unsignedDepositTx: result.unsignedDepositTx,
-      lastValidBlockHeight: result.lastValidBlockHeight,
-      passphrase: result.passphrase,
-      burnerAddress: result.burnerAddress,
-      estimatedFeeLamports: result.estimatedFeeLamports,
-      estimatedFeeSOL: result.estimatedFeeSOL,
-    };
+    throw new Error(
+      "Umbra Send & Claim uses a client-side flow — call /api/umbra/sc/prepare directly instead of the standard prepare route."
+    );
   },
 
   async submitSendClaim(
-    input: SubmitSendClaimInput
+    _input: SubmitSendClaimInput
   ): Promise<SubmitSendClaimResult> {
-    const result = await submitUmbraSendClaim({
-      connection: input.connection,
-      signedDepositTx: input.signedDepositTx,
-      sessionSignature: input.sessionSignature,
-      activityId: input.activityId,
-      senderPublicKey: input.senderPublicKey,
-      lastValidBlockHeight: input.lastValidBlockHeight,
-    });
-    return {
-      activityId: result.activityId,
-      depositTx: result.depositTx,
-      withdrawTx: result.withdrawTx,
-      claimLink: result.claimLink,
-      burnerAddress: result.burnerAddress,
-    };
+    throw new Error(
+      "Umbra Send & Claim uses a client-side flow — call /api/umbra/sc/record directly instead of the standard submit route."
+    );
   },
 
   async claim(input: ClaimInput): Promise<ClaimResult> {

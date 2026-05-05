@@ -4,11 +4,11 @@ import nacl from "tweetnacl";
 
 import { TokenType } from "@/lib/privacycash/tokens";
 import {
-  DEFAULT_PROVIDER_ID,
   getProvider,
   isProviderId,
   type ProviderId,
 } from "@/lib/providers";
+import { resolveAutoRoute } from "@/lib/router/autoRoute";
 import { getSessionMessageForProvider } from "@/lib/session-messages";
 
 export async function POST(request: NextRequest) {
@@ -46,17 +46,6 @@ export async function POST(request: NextRequest) {
       providerId?: string;
     } = body;
 
-    let providerId: ProviderId = DEFAULT_PROVIDER_ID;
-    if (providerIdInput) {
-      if (!isProviderId(providerIdInput)) {
-        return NextResponse.json(
-          { error: `Unknown providerId: ${providerIdInput}` },
-          { status: 400 }
-        );
-      }
-      providerId = providerIdInput;
-    }
-
     // Validation
     if (!senderPublicKey || !amount || !token) {
       return NextResponse.json(
@@ -70,6 +59,27 @@ export async function POST(request: NextRequest) {
         { error: "Amount must be greater than zero" },
         { status: 400 }
       );
+    }
+
+    // If client didn't pre-resolve Auto (legacy callers, fallback), resolve
+    // server-side. Picker on web pre-resolves via useAutoRoute and sends a
+    // concrete providerId so the session-sig message matches.
+    let providerId: ProviderId;
+    if (providerIdInput) {
+      if (!isProviderId(providerIdInput)) {
+        return NextResponse.json(
+          { error: `Unknown providerId: ${providerIdInput}` },
+          { status: 400 }
+        );
+      }
+      providerId = providerIdInput;
+    } else {
+      const auto = await resolveAutoRoute({
+        flow: "send_claim",
+        senderAddress: senderPublicKey,
+        receiverAddress: null,
+      });
+      providerId = auto.providerId;
     }
 
     // Parse inputs
