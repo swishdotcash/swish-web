@@ -39,7 +39,10 @@ export function useAutoRoute(args: UseAutoRouteArgs): UseAutoRouteResult {
   const [isLoading, setIsLoading] = useState(false);
 
   useEffect(() => {
-    if (!enabled || !senderAddress || !receiverAddress) {
+    // send_claim has no receiver at sender time (recipient comes from the
+    // link). Other flows still require a receiver.
+    const receiverOk = flow === "send_claim" || !!receiverAddress;
+    if (!enabled || !senderAddress || !receiverOk) {
       setResolved(null);
       setReason(null);
       setIsLoading(false);
@@ -53,7 +56,9 @@ export function useAutoRoute(args: UseAutoRouteArgs): UseAutoRouteResult {
         const url =
           `/api/router/preview?flow=${encodeURIComponent(flow)}` +
           `&sender=${encodeURIComponent(senderAddress)}` +
-          `&receiver=${encodeURIComponent(receiverAddress)}`;
+          (receiverAddress
+            ? `&receiver=${encodeURIComponent(receiverAddress)}`
+            : "");
         const res = await fetch(url);
         const json = (await res.json()) as {
           providerId: ProviderId;
