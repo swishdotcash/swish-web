@@ -298,12 +298,17 @@ export async function getUserByWallet(address: string): Promise<User | null> {
   return data;
 }
 
-// Get user by Twitter handle
+// Get user by Twitter handle. Case-insensitive lookup because
+// /api/user/register stores the handle as-is from Privy/Twitter
+// (preserves original case like "LilFatFrank") while callers normalize
+// to lowercase before searching. Escapes ILIKE wildcards (% and _) so
+// handles with underscores match literally, not as single-char wildcards.
 export async function getUserByTwitterHandle(handle: string): Promise<User | null> {
+  const escaped = handle.replace(/[%_\\]/g, "\\$&");
   const { data, error } = await getSupabase()
     .from("users")
     .select("*")
-    .eq("twitter_handle", handle)
+    .ilike("twitter_handle", escaped)
     .single();
 
   if (error) {

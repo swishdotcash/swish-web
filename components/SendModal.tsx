@@ -45,6 +45,7 @@ export function SendModal({
   const [recipientUmbraStatus, setRecipientUmbraStatus] = useState<
     "idle" | "checking" | "registered" | "unregistered" | "error"
   >("idle");
+  const [resolvedXAddress, setResolvedXAddress] = useState<string | null>(null);
   const [state, setState] = useState<ModalState>("input");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [showQRScanner, setShowQRScanner] = useState(false);
@@ -79,17 +80,26 @@ export function SendModal({
     return /^[a-zA-Z0-9_]{1,15}$/.test(xHandle);
   }, [xHandle]);
 
-  // Resolve Auto for wallet-mode recipients: ask the preview endpoint
-  // which protocol Auto would dispatch to. For X-handle mode we don't
-  // know the recipient until proceed time, so resolution happens inline
-  // there instead.
+  // Resolve Auto pre-proceed for both wallet and X modes. For X mode we
+  // wait until the check-x debounce has produced a final status before
+  // firing — `resolvedXAddress` is null until the handle is found, and
+  // for Case 3 (brand-new X user) it stays null forever. The server's
+  // preview handles null receiver gracefully (falls through to MB/PC).
+  const xResolveSettled =
+    recipientUmbraStatus !== "idle" && recipientUmbraStatus !== "checking";
   const { resolved: autoResolved } = useAutoRoute({
     enabled:
-      provider === "auto" && recipientType === "wallet" && isValidAddress,
+      provider === "auto" &&
+      ((recipientType === "wallet" && isValidAddress) ||
+        (recipientType === "x" && isValidXHandle && xResolveSettled)),
     flow: "send",
     senderAddress: senderAddress,
     receiverAddress:
-      recipientType === "wallet" && isValidAddress ? walletAddress : null,
+      recipientType === "wallet" && isValidAddress
+        ? walletAddress
+        : recipientType === "x"
+          ? resolvedXAddress
+          : null,
   });
 
   // Effective provider for dispatch + fee display. When picker is Auto
@@ -108,30 +118,54 @@ export function SendModal({
   const canProceed =
     recipientType === "wallet" ? isValidAddress : isValidXHandle;
 
-  // Debounced recipient registration check for wallet-mode addresses.
-  // X handles can't be checked until resolved at proceed time — pre-flight
-  // inside useUmbraSend catches that case.
+  // Debounced recipient registration check. Wallet mode hits
+  // /api/umbra/status (on-chain only). X mode hits /api/user/check-x
+  // (DB lookup + on-chain) which also resolves the wallet address —
+  // stored in resolvedXAddress for useAutoRoute.
   useEffect(() => {
-    if (recipientType !== "wallet" || !isValidAddress) {
+    const validWallet = recipientType === "wallet" && isValidAddress;
+    const validX = recipientType === "x" && isValidXHandle;
+    if (!validWallet && !validX) {
       setRecipientUmbraStatus("idle");
+      setResolvedXAddress(null);
       return;
     }
     let cancelled = false;
     setRecipientUmbraStatus("checking");
     const t = setTimeout(async () => {
       try {
-        const res = await fetch(
-          `/api/umbra/status?address=${encodeURIComponent(walletAddress)}`
-        );
-        if (cancelled) return;
-        if (!res.ok) {
-          setRecipientUmbraStatus("error");
-          return;
+        if (validWallet) {
+          const res = await fetch(
+            `/api/umbra/status?address=${encodeURIComponent(walletAddress)}`
+          );
+          if (cancelled) return;
+          if (!res.ok) {
+            setRecipientUmbraStatus("error");
+            return;
+          }
+          const json = (await res.json()) as { registered: boolean };
+          setRecipientUmbraStatus(
+            json.registered ? "registered" : "unregistered"
+          );
+        } else {
+          const res = await fetch(
+            `/api/user/check-x?handle=${encodeURIComponent(xHandle)}`
+          );
+          if (cancelled) return;
+          if (!res.ok) {
+            setRecipientUmbraStatus("error");
+            return;
+          }
+          const json = (await res.json()) as {
+            exists: boolean;
+            walletAddress: string | null;
+            umbraRegistered: boolean;
+          };
+          setResolvedXAddress(json.walletAddress);
+          setRecipientUmbraStatus(
+            json.umbraRegistered ? "registered" : "unregistered"
+          );
         }
-        const json = (await res.json()) as { registered: boolean };
-        setRecipientUmbraStatus(
-          json.registered ? "registered" : "unregistered"
-        );
       } catch {
         if (!cancelled) setRecipientUmbraStatus("error");
       }
@@ -140,17 +174,16 @@ export function SendModal({
       cancelled = true;
       clearTimeout(t);
     };
-  }, [walletAddress, recipientType, isValidAddress]);
+  }, [walletAddress, xHandle, recipientType, isValidAddress, isValidXHandle]);
 
   // If the user is currently on Umbra and the recipient turns out to be
   // unregistered, we DO NOT silently switch them — that would route the
   // send through PC and surprise the user with a PC sig prompt. Instead
   // we block proceed (see canProceedFinal below) and show a clear hint.
-  // The user must manually pick a different protocol.
+  // The user must manually pick a different protocol. Applies in both
+  // wallet and X modes (X mode resolves recipientUmbraStatus via check-x).
   const umbraBlockedByRecipient =
-    provider === "umbra" &&
-    recipientType === "wallet" &&
-    recipientUmbraStatus === "unregistered";
+    provider === "umbra" && recipientUmbraStatus === "unregistered";
 
   const resolveXHandle = async (): Promise<string | null> => {
     setIsResolvingX(true);
@@ -426,7 +459,6 @@ export function SendModal({
                       p === "umbra" && umbraStatus !== "registered";
                     const recipientUmbraDisabled =
                       p === "umbra" &&
-                      recipientType === "wallet" &&
                       recipientUmbraStatus === "unregistered";
                     const isUmbraDisabled =
                       senderUmbraDisabled || recipientUmbraDisabled;
@@ -472,27 +504,17 @@ export function SendModal({
                   </p>
                 )}
                 {umbraStatus === "registered" &&
-                  recipientType === "wallet" &&
                   recipientUmbraStatus === "checking" && (
                     <p className="text-xs text-[#121212]/40 mt-2">
                       Checking recipient on Umbra…
                     </p>
                   )}
                 {umbraStatus === "registered" &&
-                  recipientType === "wallet" &&
                   recipientUmbraStatus === "unregistered" && (
                     <p className="text-xs text-[#121212]/50 mt-2">
                       Recipient is not registered on Umbra — pick MagicBlock
                       or Privacy Cash, or have them enable Umbra in their
                       profile.
-                    </p>
-                  )}
-                {provider === "umbra" &&
-                  umbraStatus === "registered" &&
-                  recipientType === "x" && (
-                    <p className="text-xs text-[#121212]/50 mt-2">
-                      We&apos;ll resolve the X handle when you proceed; the
-                      send will fail cleanly if they&apos;re not on Umbra.
                     </p>
                   )}
               </div>
@@ -506,8 +528,8 @@ export function SendModal({
                   </span>
                 </div>
                 {provider === "auto" &&
-                  recipientType === "wallet" &&
-                  isValidAddress && (
+                  ((recipientType === "wallet" && isValidAddress) ||
+                    (recipientType === "x" && isValidXHandle)) && (
                     <div className="flex justify-between">
                       <span className="text-[#121212]">Routed via</span>
                       <span className="text-[#121212]">
