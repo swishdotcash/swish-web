@@ -5,13 +5,15 @@
  * "Auto" and we know enough state (sender + receiver) to ask the
  * server which protocol Auto would pick.
  *
- * Re-fetches whenever sender/receiver/flow changes. Skips entirely if
- * receiver is null (e.g. X-handle pre-resolve in SendModal — Auto
- * resolves at proceed time inside the dispatch flow instead).
+ * Re-fetches whenever sender/receiver/flow changes. Caller controls
+ * whether to fire via the `enabled` flag (e.g. wallet mode gates on
+ * isValidAddress, X mode gates on isValidXHandle). Receiver may be null
+ * when caller has finished pre-resolution and resolved to nothing
+ * (e.g. X handle not in our users table) — server handles null receiver
+ * by falling through to MB/PC, so we let the call go through.
  *
- * Returned `resolved` is null while loading or when inputs are
- * incomplete; callers should treat that as "we don't know yet" and
- * either wait or fall back to a worst-case display.
+ * Returned `resolved` is null while loading; callers should treat that
+ * as "we don't know yet" and fall back to a worst-case display.
  */
 
 import { useEffect, useState } from "react";
@@ -39,10 +41,7 @@ export function useAutoRoute(args: UseAutoRouteArgs): UseAutoRouteResult {
   const [isLoading, setIsLoading] = useState(false);
 
   useEffect(() => {
-    // send_claim has no receiver at sender time (recipient comes from the
-    // link). Other flows still require a receiver.
-    const receiverOk = flow === "send_claim" || !!receiverAddress;
-    if (!enabled || !senderAddress || !receiverOk) {
+    if (!enabled || !senderAddress) {
       setResolved(null);
       setReason(null);
       setIsLoading(false);
