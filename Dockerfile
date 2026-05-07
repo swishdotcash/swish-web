@@ -4,12 +4,13 @@ FROM node:20-slim AS base
 FROM base AS deps
 WORKDIR /app
 
-# Copy package files and postinstall script
-COPY package.json package-lock.json* ./
+# Copy package files, .npmrc (legacy-peer-deps), and postinstall script
+COPY package.json package-lock.json* .npmrc* ./
 COPY scripts ./scripts
 
-# Install dependencies (postinstall patches privacycash)
-RUN npm ci || npm install
+# Install dependencies (postinstall patches privacycash). PC SDK requires
+# --legacy-peer-deps; flag set explicitly as belt-and-suspenders with .npmrc.
+RUN npm ci --legacy-peer-deps || npm install --legacy-peer-deps
 
 # Rebuild the source code only when needed
 FROM base AS builder
