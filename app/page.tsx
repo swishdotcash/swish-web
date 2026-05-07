@@ -20,7 +20,7 @@ type ModalType = "send" | "receive" | "sendClaim" | null;
 
 export default function Home() {
   const { login, authenticated, logout, user } = usePrivy();
-  const { walletAddress, signature, address, needsSignature, error: signError, requestSignature } = useSessionSignature();
+  const { walletAddress, getSignature } = useSessionSignature();
   useUserRegistration();
   const {
     balance,
@@ -32,11 +32,8 @@ export default function Home() {
   const [showDropdown, setShowDropdown] = useState(false);
   const [copied, setCopied] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
-  const [signModalShake, setSignModalShake] = useState(false);
 
   const isXUser = !!user?.twitter;
-  // Show mandatory sign-in modal for Twitter users who haven't signed yet
-  const showSignModal = isXUser && authenticated && !signature && !!walletAddress;
   const twitterHandle = user?.twitter?.username;
 
   const numAmount = parseFloat(amount) || 0;
@@ -100,9 +97,9 @@ export default function Home() {
   };
 
   const handleCopyAddress = async () => {
-    if (!address) return;
+    if (!walletAddress) return;
     try {
-      await navigator.clipboard.writeText(address);
+      await navigator.clipboard.writeText(walletAddress);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {}
@@ -182,7 +179,7 @@ export default function Home() {
                       height={16}
                     />
                     <span className="text-[#121212] text-md flex-1 text-left">
-                      {address ? formatAddr(address) : ""}
+                      {walletAddress ? formatAddr(walletAddress) : ""}
                     </span>
                     <Image
                       src={copied ? "/assets/success-alt.svg" : "/assets/copy-icon.svg"}
@@ -286,8 +283,7 @@ export default function Home() {
           onClose={closeModal}
           amount={amount}
           onSendViaClaim={() => setActiveModal("sendClaim")}
-          signature={signature}
-          senderPublicKey={address}
+          getSignature={getSignature}
         />
       )}
 
@@ -296,8 +292,7 @@ export default function Home() {
           isOpen={true}
           onClose={closeModal}
           amount={amount}
-          signature={signature}
-          requesterAddress={address}
+          getSignature={getSignature}
         />
       )}
 
@@ -306,73 +301,9 @@ export default function Home() {
           isOpen={true}
           onClose={closeModal}
           amount={amount}
-          signature={signature}
-          senderPublicKey={address}
+          getSignature={getSignature}
         />
       )}
-
-      {/* Mandatory sign-in modal for Twitter users */}
-      <AnimatePresence>
-        {showSignModal && (
-          <>
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.2 }}
-              className="fixed inset-0 bg-black/40 z-50 backdrop-blur-xs"
-              onClick={() => {
-                setSignModalShake(true);
-                setTimeout(() => setSignModalShake(false), 500);
-              }}
-            />
-            <motion.div
-              initial={{ opacity: 0, y: "100%" }}
-              animate={{
-                opacity: 1,
-                y: 0,
-                x: signModalShake ? [0, -6, 6, -6, 6, 0] : 0,
-              }}
-              exit={{ opacity: 0, y: "100%" }}
-              transition={
-                signModalShake
-                  ? { x: { duration: 0.4 }, type: "spring", damping: 25, stiffness: 300 }
-                  : { type: "spring", damping: 25, stiffness: 300 }
-              }
-              className="fixed z-50 bg-[#fafafa] rounded-t-3xl md:rounded-3xl w-full max-w-[430px] bottom-0 left-1/2 -translate-x-1/2 md:bottom-auto md:top-1/2 md:-translate-y-1/2"
-            >
-              <div className="flex justify-center pt-3 pb-2 md:hidden">
-                <div className="w-10 h-1 bg-[#121212]/20 rounded-full" />
-              </div>
-              <div className="px-6 pb-8 pt-4 md:pt-6 flex flex-col items-center">
-                <Image
-                  src="/assets/logo.svg"
-                  alt="Privacy Money"
-                  width={48}
-                  height={48}
-                  className="mb-4"
-                />
-                <h2 className="text-lg font-semibold text-[#121212] mb-2">
-                  Sign In Required
-                </h2>
-                <p className="text-sm text-[#121212]/60 text-center mb-6">
-                  Please sign the message to verify your wallet and continue using Swish.
-                </p>
-                <motion.button
-                  onClick={requestSignature}
-                  whileTap={{ scale: 0.98 }}
-                  className="w-full h-10 bg-[#121212] rounded-full flex items-center justify-center text-[#fafafa] font-semibold shadow-[0_4px_12px_rgba(18,18,18,0.15)]"
-                >
-                  Sign In
-                </motion.button>
-                {signError && (
-                  <p className="text-red-500 text-xs mt-3 text-center">{signError}</p>
-                )}
-              </div>
-            </motion.div>
-          </>
-        )}
-      </AnimatePresence>
     </>
   );
 }

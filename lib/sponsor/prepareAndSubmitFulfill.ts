@@ -179,6 +179,7 @@ export interface SubmitFulfillParams {
   activityId: string;
   payerPublicKey: PublicKey;
   lastValidBlockHeight?: number;
+  providerId: string; // Stamped on the activity row at settlement
 }
 
 export interface SubmitFulfillResult {
@@ -227,6 +228,7 @@ export async function submitFulfill(
     activityId,
     payerPublicKey,
     lastValidBlockHeight,
+    providerId,
   } = params;
 
   console.log("=== Submit Fulfill ===");
@@ -308,10 +310,11 @@ export async function submitFulfill(
     const withdrawTx = withdrawResult.tx;
     console.log("Withdraw tx:", withdrawTx);
 
-    // Update activity status and add sender_address
+    // Update activity status — provider_id stamped by the actual settling protocol
     await updateActivityStatus(activity.id, "settled", {
       tx_hash: withdrawTx,
       sender_address: payerPublicKey.toBase58(),
+      provider_id: providerId,
     });
 
     console.log("Activity updated: settled");

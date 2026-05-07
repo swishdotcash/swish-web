@@ -24,6 +24,7 @@ interface SendParams {
   message?: string;
   signature: string;
   senderPublicKey: string;
+  providerId?: string;
 }
 
 interface UseSendTransactionResult {
@@ -87,6 +88,7 @@ export function useSendTransaction(): UseSendTransactionResult {
             amount: params.amount,
             token: params.token || "USDC",
             message: params.message,
+            providerId: params.providerId,
           }),
         });
 
@@ -138,6 +140,12 @@ export function useSendTransaction(): UseSendTransactionResult {
             amount: params.amount,
             token: params.token || "USDC",
             lastValidBlockHeight: prepareResult.lastValidBlockHeight,
+            // Pass providerId so the submit route can validate the session
+            // sig against the right protocol's message. PC + Send & Claim
+            // flows stamp activity.provider_id at create and submit reads
+            // from the row, but MB Send/Fulfill stamp at settle (PR #20
+            // rule), so submit needs the body fallback.
+            providerId: params.providerId,
           }),
         });
 

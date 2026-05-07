@@ -7,24 +7,33 @@ import { Modal } from "./Modal";
 import { Spinner } from "./Spinner";
 import { formatNumber } from "@/utils";
 import { useSendClaimTransaction } from "@/hooks/useSendClaimTransaction";
-import { useFee } from "@/hooks/useFee";
+import { useProtocolFee } from "@/hooks/useProtocolFee";
+import { useAutoRoute } from "@/hooks/useAutoRoute";
+import {
+  useSessionSignature,
+  type GetSessionSignature,
+} from "@/hooks/useSessionSignature";
+import type { ProviderId } from "@/lib/providers/types";
 
 interface SendClaimModalProps {
   isOpen: boolean;
   onClose: () => void;
   amount: string;
-  signature: string | null;
-  senderPublicKey: string | null;
+  getSignature: GetSessionSignature;
 }
 
 type ModalState = "input" | "loading" | "success" | "error";
+// Umbra hidden from SC picker for the Frontier demo (Arcium MPC callbacks
+// for `RegisterUserForAnonymousUsageV11` are unreliable, blocking the
+// burner registration step). Backend code stays — re-enable by adding
+// "umbra" back here + restoring the branches below.
+type ProviderChoice = "auto" | "privacy-cash" | "magicblock-per";
 
 export function SendClaimModal({
   isOpen,
   onClose,
   amount,
-  signature,
-  senderPublicKey,
+  getSignature,
 }: SendClaimModalProps) {
   const [message, setMessage] = useState("");
   const [state, setState] = useState<ModalState>("input");
@@ -32,16 +41,67 @@ export function SendClaimModal({
   const [passphrase, setPassphrase] = useState("");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [provider, setProvider] = useState<ProviderChoice>("auto");
   const { sendClaim } = useSendClaimTransaction();
-  const { baseFee, feePercent } = useFee();
+  // Each protocol's SC reclaim uses its own session message — the burner
+  // privkey is encrypted with the sender's protocol-specific signature so
+  // we must mint the right one when the user picks MB. PC's getSignature
+  // is the parent prop fallback for "auto" and "privacy-cash".
+  const {
+    getSignature: getMbSessionSignature,
+    walletAddress: senderAddress,
+  } = useSessionSignature("magicblock-per");
 
   const numAmount = parseFloat(amount) || 0;
-  const partnerFee = baseFee + numAmount * feePercent;
+
+  // Resolve Auto for SC. No receiver at sender time (recipient comes from
+  // the claim link), so this only depends on MB /health. Umbra is never
+  // an Auto target for SC — it stays picker-only (sender Umbra reg is
+  // opt-in; Auto can't silently force it).
+  const { resolved: autoResolved } = useAutoRoute({
+    enabled: provider === "auto" && !!senderAddress,
+    flow: "send_claim",
+    senderAddress: senderAddress,
+    receiverAddress: null,
+  });
+
+  // When picker = Auto, prefer the resolved provider for fee display +
+  // session-sig minting; if not resolved yet, fall back to "auto"
+  // (useProtocolFee treats this as PC worst-case).
+  const effectiveProvider: ProviderChoice = (
+    provider === "auto" ? (autoResolved ?? "auto") : provider
+  ) as ProviderChoice;
+
+  // Per-protocol fee. SC has different fee structure than direct send:
+  //   PC: base + 0.35% (deducted from claim)
+  //   MB: gas only
+  //   Umbra: 0.7% on claim (protocol + relayer)
+  const { feeUSDC: partnerFee, breakdown: feeBreakdown } = useProtocolFee(
+    effectiveProvider,
+    numAmount,
+    "send_claim"
+  );
   const total = numAmount - partnerFee;
 
   const handleProceed = async () => {
-    if (!signature || !senderPublicKey) {
-      setErrorMessage("No session signature. Please reconnect wallet.");
+    // Resolve the dispatch provider. If the user picked Auto and
+    // useAutoRoute hasn't returned yet (rare — auth + senderAddress
+    // happen before the modal opens in practice), fall back to PC so
+    // the user can proceed.
+    let dispatchProvider: ProviderId =
+      provider === "auto"
+        ? (autoResolved ?? "privacy-cash")
+        : (provider as ProviderId);
+
+    // Pick the session-sig hook matching the dispatch provider. The
+    // server validates the sig against `getSessionMessageForProvider`,
+    // so picking the wrong hook here = 401.
+    const sessionForProvider = (id: ProviderId) =>
+      id === "magicblock-per" ? getMbSessionSignature() : getSignature();
+
+    const session = await sessionForProvider(dispatchProvider);
+    if (!session) {
+      setErrorMessage("Signature required to continue");
       setState("error");
       return;
     }
@@ -50,17 +110,43 @@ export function SendClaimModal({
     setErrorMessage(null);
 
     try {
-      const result = await sendClaim({
-        amount: numAmount,
-        token: "USDC",
-        message: message.trim() || undefined,
-        signature,
-        senderPublicKey,
-      });
+      try {
+        const result = await sendClaim({
+          amount: numAmount,
+          token: "USDC",
+          message: message.trim() || undefined,
+          signature: session.signature,
+          senderPublicKey: session.address,
+          providerId: dispatchProvider,
+        });
 
-      setClaimLink(result.claimLink);
-      setPassphrase(result.passphrase);
-      setState("success");
+        setClaimLink(result.claimLink);
+        setPassphrase(result.passphrase);
+        setState("success");
+      } catch (mbErr: any) {
+        // Layer 2 fallback: under Auto, if MB dispatch fails (catches
+        // partial outages /health doesn't see), retry once with PC.
+        // Costs a PC session-sig prompt if not cached.
+        if (provider === "auto" && dispatchProvider === "magicblock-per") {
+          console.warn("MB SC failed under Auto, falling back to PC:", mbErr);
+          const pcSession = await getSignature();
+          if (!pcSession) throw mbErr;
+          dispatchProvider = "privacy-cash";
+          const result = await sendClaim({
+            amount: numAmount,
+            token: "USDC",
+            message: message.trim() || undefined,
+            signature: pcSession.signature,
+            senderPublicKey: pcSession.address,
+            providerId: "privacy-cash",
+          });
+          setClaimLink(result.claimLink);
+          setPassphrase(result.passphrase);
+          setState("success");
+        } else {
+          throw mbErr;
+        }
+      }
     } catch (error: any) {
       console.error("Send claim failed:", error);
       setErrorMessage(error.message || "Something went wrong");
@@ -85,6 +171,7 @@ export function SendClaimModal({
     setPassphrase("");
     setErrorMessage(null);
     setCopied(false);
+    setProvider("auto");
     onClose();
   };
 
@@ -131,14 +218,63 @@ export function SendClaimModal({
               </div>
             </div>
 
+            {/* Privacy provider picker */}
+            <div className="mb-6">
+              <label className="text-sm text-[#121212]/50 mb-1 block">
+                Privacy protocol
+              </label>
+              <div className="flex gap-1.5 flex-wrap">
+                {(
+                  ["auto", "privacy-cash", "magicblock-per"] as ProviderChoice[]
+                ).map((p) => {
+                  const label =
+                    p === "auto"
+                      ? "Auto"
+                      : p === "privacy-cash"
+                        ? "Privacy Cash"
+                        : "MagicBlock";
+                  return (
+                    <button
+                      key={p}
+                      onClick={() => setProvider(p)}
+                      className={`flex-1 min-w-[72px] h-9 rounded-full text-xs font-medium transition-all ${
+                        provider === p
+                          ? "bg-[#121212] text-[#fafafa]"
+                          : "bg-[#121212]/5 text-[#121212]/70 hover:bg-[#121212]/10"
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
             {/* Amount Details */}
             <div className="space-y-3 mb-8">
               <div className="flex justify-between">
                 <span className="text-[#121212]">Amount</span>
                 <span className="text-[#121212]">{formatNumber(numAmount)} USDC</span>
               </div>
+              {provider === "auto" && autoResolved && (
+                <div className="flex justify-between">
+                  <span className="text-[#121212]">Routed via</span>
+                  <span className="text-[#121212]">
+                    {autoResolved === "magicblock-per"
+                      ? "MagicBlock"
+                      : autoResolved === "privacy-cash"
+                        ? "Privacy Cash"
+                        : "…"}
+                  </span>
+                </div>
+              )}
               <div className="flex justify-between">
-                <span className="text-[#121212]">Partner Fees</span>
+                <div>
+                  <span className="text-[#121212]">Partner Fees</span>
+                  <span className="text-[#121212]/40 text-xs ml-1">
+                    ({feeBreakdown})
+                  </span>
+                </div>
                 <span className="text-[#121212]">~{formatNumber(partnerFee)} USDC</span>
               </div>
               <div className="flex justify-between">

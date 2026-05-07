@@ -27,6 +27,7 @@ interface SendClaimParams {
   message?: string;
   signature: string;
   senderPublicKey: string;
+  providerId?: "auto" | "privacy-cash" | "magicblock-per" | "umbra";
 }
 
 interface SendClaimResult {
@@ -97,6 +98,10 @@ export function useSendClaimTransaction(): UseSendClaimTransactionResult {
             amount: params.amount,
             token: params.token || "USDC",
             message: params.message,
+            providerId:
+              params.providerId && params.providerId !== "auto"
+                ? params.providerId
+                : undefined,
           }),
         });
 

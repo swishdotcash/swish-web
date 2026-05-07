@@ -73,6 +73,11 @@ export interface PrepareClaimParams {
   amount: number;
   token: TokenType;
   message?: string;
+  // Stamped on the activity row at create time. The privacy work for
+  // send_claim happens here (deposit + withdraw to burner), so the row
+  // owns the provider id from the start — claim/reclaim read it back
+  // to dispatch.
+  providerId: string;
 }
 
 export interface PrepareClaimResult {
@@ -99,6 +104,7 @@ export async function prepareClaim(
     amount,
     token,
     message,
+    providerId,
   } = params;
 
   const baseUnits = Math.floor(amount * 1_000_000);
@@ -136,6 +142,7 @@ export async function prepareClaim(
     burner_address: burnerKeypair.publicKey.toBase58(),
     encrypted_for_receiver: encryptedForReceiver,
     encrypted_for_sender: encryptedForSender,
+    provider_id: providerId,
   });
   console.log("Activity created:", activity.id);
 
@@ -380,6 +387,7 @@ export interface ClaimWithPassphraseParams {
   passphrase: string;
   receiverAddress: string;
   sponsorKeypair: Keypair;
+  providerId: string; // Stamped on the activity row at settlement
 }
 
 export interface ClaimWithPassphraseResult {
@@ -395,7 +403,7 @@ export interface ClaimWithPassphraseResult {
 export async function claimWithPassphrase(
   params: ClaimWithPassphraseParams
 ): Promise<ClaimWithPassphraseResult> {
-  const { connection, activityId, passphrase, receiverAddress, sponsorKeypair } = params;
+  const { connection, activityId, passphrase, receiverAddress, sponsorKeypair, providerId } = params;
 
   console.log("=== Claim with Passphrase ===");
   console.log("Activity:", activityId);
@@ -527,10 +535,11 @@ export async function claimWithPassphrase(
 
     console.log("Claim tx:", signature);
 
-    // Update activity
+    // Update activity — provider_id stamped by the actual settling protocol
     await updateActivityStatus(activity.id, "settled", {
       claim_tx_hash: signature,
       receiver_address: receiverAddress,
+      provider_id: providerId,
     });
 
     console.log("Activity updated: settled");

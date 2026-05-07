@@ -17,7 +17,11 @@ CREATE TABLE activity (
   encrypted_for_receiver JSONB,
   encrypted_for_sender JSONB,
   deposit_tx_hash TEXT,
-  claim_tx_hash TEXT
+  claim_tx_hash TEXT,
+
+  -- Privacy protocol that actually settled this activity (privacy-cash, magicblock-per, umbra).
+  -- NULL while open/processing — stamped at settle time by whichever protocol moved the money.
+  provider_id TEXT
 );
 
 -- Indexes for common queries
@@ -32,6 +36,7 @@ CREATE INDEX idx_activity_token_address ON activity(token_address);
 -- Composite indexes for stats queries
 CREATE INDEX idx_activity_sender_status ON activity(sender_address, status);
 CREATE INDEX idx_activity_receiver_status ON activity(receiver_address, status);
+CREATE INDEX idx_activity_provider_id ON activity(provider_id);
 
 -- Enable Row Level Security
 ALTER TABLE activity ENABLE ROW LEVEL SECURITY;

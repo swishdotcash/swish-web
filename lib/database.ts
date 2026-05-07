@@ -33,6 +33,9 @@ export interface Activity {
   tx_hash: string | null;
   created_at: number;
   updated_at: number;
+  // NULL while activity is open/processing/cancelled — set by the protocol
+  // that actually settles the activity.
+  provider_id: string | null;
 
   // send_claim-specific fields (optional, only for send_claim type)
   burner_address?: string | null;
@@ -56,14 +59,23 @@ function getSupabase() {
   return supabase;
 }
 
-// Create activity
+// Create activity. provider_id is NOT set here for `send` / `request` —
+// it's stamped at settlement time by whichever protocol actually moved
+// the money. For `send_claim` the privacy work happens at create
+// (deposit + withdraw to burner), so callers may pass `provider_id`
+// here and it lives on the row from the start; this lets the
+// claim/reclaim routes dispatch to the right provider without trusting
+// a body param from a different user.
 export async function createActivity(
-  activity: Omit<Activity, "id" | "created_at" | "updated_at">
+  activity: Omit<Activity, "id" | "created_at" | "updated_at" | "provider_id"> & {
+    provider_id?: string | null;
+  }
 ): Promise<Activity> {
   const now = Date.now();
   const id = crypto.randomUUID();
 
   const record: Activity = {
+    provider_id: null,
     ...activity,
     id,
     created_at: now,
@@ -106,7 +118,20 @@ export async function getActivity(id: string): Promise<Activity | null> {
 export async function updateActivityStatus(
   id: string,
   status: ActivityStatus,
-  updates?: Partial<Pick<Activity, "tx_hash" | "claim_tx_hash" | "receiver_address" | "sender_address">>
+  updates?: Partial<
+    Pick<
+      Activity,
+      | "tx_hash"
+      | "claim_tx_hash"
+      | "receiver_address"
+      | "sender_address"
+      | "provider_id"
+      | "burner_address"
+      | "encrypted_for_sender"
+      | "encrypted_for_receiver"
+      | "deposit_tx_hash"
+    >
+  >
 ): Promise<void> {
   const { error } = await getSupabase()
     .from("activity")
@@ -273,12 +298,17 @@ export async function getUserByWallet(address: string): Promise<User | null> {
   return data;
 }
 
-// Get user by Twitter handle
+// Get user by Twitter handle. Case-insensitive lookup because
+// /api/user/register stores the handle as-is from Privy/Twitter
+// (preserves original case like "LilFatFrank") while callers normalize
+// to lowercase before searching. Escapes ILIKE wildcards (% and _) so
+// handles with underscores match literally, not as single-char wildcards.
 export async function getUserByTwitterHandle(handle: string): Promise<User | null> {
+  const escaped = handle.replace(/[%_\\]/g, "\\$&");
   const { data, error } = await getSupabase()
     .from("users")
     .select("*")
-    .eq("twitter_handle", handle)
+    .ilike("twitter_handle", escaped)
     .single();
 
   if (error) {
@@ -345,4 +375,68 @@ export async function getUserByPrivyId(privyId: string): Promise<User | null> {
   }
 
   return data;
+}
+
+// ============================================================
+// Umbra claimed-UTXO tracker
+// ============================================================
+//
+// Filters phantom (nullified) UTXOs that Umbra's scanner returns
+// alongside genuine unclaimed ones. See:
+// memory/project_umbra_claimed_utxo_tracker.md
+
+export interface UmbraUtxoRef {
+  treeIndex: number;
+  insertionIndex: number;
+}
+
+/**
+ * Returns the set of claimed UTXO IDs (`"treeIdx:insertionIdx"`) for a
+ * wallet. Used by the client to filter scanner output before display.
+ */
+export async function getClaimedUmbraUtxoIds(
+  walletAddress: string
+): Promise<string[]> {
+  const { data, error } = await getSupabase()
+    .from("umbra_claimed_utxos")
+    .select("tree_index, insertion_index")
+    .eq("wallet_address", walletAddress);
+
+  if (error) {
+    throw new Error(`Failed to fetch claimed UTXOs: ${error.message}`);
+  }
+  return (data ?? []).map(
+    (row: { tree_index: number; insertion_index: number }) =>
+      `${row.tree_index}:${row.insertion_index}`
+  );
+}
+
+/**
+ * Bulk-mark a list of UTXOs as claimed for the given wallet. Idempotent:
+ * duplicate `(wallet, tree_index, insertion_index)` rows are silently
+ * ignored via the primary key.
+ */
+export async function markUmbraUtxosClaimed(
+  walletAddress: string,
+  utxos: readonly UmbraUtxoRef[]
+): Promise<void> {
+  if (utxos.length === 0) return;
+
+  const rows = utxos.map((u) => ({
+    wallet_address: walletAddress,
+    tree_index: u.treeIndex,
+    insertion_index: u.insertionIndex,
+    claimed_at: new Date().toISOString(),
+  }));
+
+  const { error } = await getSupabase()
+    .from("umbra_claimed_utxos")
+    .upsert(rows, {
+      onConflict: "wallet_address,tree_index,insertion_index",
+      ignoreDuplicates: true,
+    });
+
+  if (error) {
+    throw new Error(`Failed to mark UTXOs claimed: ${error.message}`);
+  }
 }

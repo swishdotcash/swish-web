@@ -2,9 +2,14 @@ import { NextRequest, NextResponse } from "next/server";
 import { Connection, PublicKey } from "@solana/web3.js";
 import nacl from "tweetnacl";
 
-import { prepareClaim } from "@/lib/sponsor/prepareAndSubmitClaim";
-import { SESSION_MESSAGE } from "@/lib/sponsor/prepareAndSubmitSend";
 import { TokenType } from "@/lib/privacycash/tokens";
+import {
+  getProvider,
+  isProviderId,
+  type ProviderId,
+} from "@/lib/providers";
+import { resolveAutoRoute } from "@/lib/router/autoRoute";
+import { getSessionMessageForProvider } from "@/lib/session-messages";
 
 export async function POST(request: NextRequest) {
   try {
@@ -32,11 +37,13 @@ export async function POST(request: NextRequest) {
       amount,
       token,
       message,
+      providerId: providerIdInput,
     }: {
       senderPublicKey: string;
       amount: number;
       token: TokenType;
       message?: string;
+      providerId?: string;
     } = body;
 
     // Validation
@@ -54,11 +61,36 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // If client didn't pre-resolve Auto (legacy callers, fallback), resolve
+    // server-side. Picker on web pre-resolves via useAutoRoute and sends a
+    // concrete providerId so the session-sig message matches.
+    let providerId: ProviderId;
+    if (providerIdInput) {
+      if (!isProviderId(providerIdInput)) {
+        return NextResponse.json(
+          { error: `Unknown providerId: ${providerIdInput}` },
+          { status: 400 }
+        );
+      }
+      providerId = providerIdInput;
+    } else {
+      const auto = await resolveAutoRoute({
+        flow: "send_claim",
+        senderAddress: senderPublicKey,
+        receiverAddress: null,
+      });
+      providerId = auto.providerId;
+    }
+
     // Parse inputs
     const senderPubKey = new PublicKey(senderPublicKey);
 
-    // Verify session signature proves ownership of senderPublicKey
-    const messageBytes = Buffer.from(SESSION_MESSAGE);
+    // Verify session signature against the protocol-matching message.
+    // PC uses its own message text (PC SDK requires it for UTXO encryption);
+    // MB and Umbra use their own messages so the wallet popup matches the
+    // protocol the user picked.
+    const sessionMessage = getSessionMessageForProvider(providerId);
+    const messageBytes = Buffer.from(sessionMessage);
     const isValid = nacl.sign.detached.verify(
       messageBytes,
       sessionSigBytes,
@@ -82,8 +114,9 @@ export async function POST(request: NextRequest) {
     }
     const connection = new Connection(rpcUrl, "confirmed");
 
-    // Execute prepare - user pays their own gas fees
-    const result = await prepareClaim({
+    // Execute prepare via provider - user pays their own gas fees
+    const provider = getProvider(providerId);
+    const result = await provider.prepareSendClaim({
       connection,
       senderPublicKey: senderPubKey,
       sessionSignature: sessionSigBytes,
@@ -94,7 +127,8 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({
       ...result,
-      sessionMessage: SESSION_MESSAGE,
+      providerId,
+      sessionMessage,
     });
   } catch (error: any) {
     console.error("Prepare claim link error:", error);

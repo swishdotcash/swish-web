@@ -3,8 +3,14 @@ import { Connection, Keypair, PublicKey } from "@solana/web3.js";
 import bs58 from "bs58";
 import nacl from "tweetnacl";
 
-import { reclaimWithSignature } from "@/lib/sponsor/prepareAndSubmitClaim";
-import { SESSION_MESSAGE } from "@/lib/sponsor/prepareAndSubmitSend";
+import {
+  DEFAULT_PROVIDER_ID,
+  getProvider,
+  isProviderId,
+  type ProviderId,
+} from "@/lib/providers";
+import { getActivity } from "@/lib/database";
+import { getSessionMessageForProvider } from "@/lib/session-messages";
 
 export async function POST(request: NextRequest) {
   try {
@@ -43,11 +49,22 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // provider_id is stamped on the row at prepare time; read it back to dispatch.
+    const activity = await getActivity(activityId);
+    if (!activity) {
+      return NextResponse.json({ error: "Claim link not found" }, { status: 404 });
+    }
+    const providerId: ProviderId = isProviderId(activity.provider_id ?? "")
+      ? (activity.provider_id as ProviderId)
+      : DEFAULT_PROVIDER_ID;
+
     // Parse inputs
     const senderPubKey = new PublicKey(senderPublicKey);
 
-    // Verify session signature proves ownership of senderPublicKey
-    const messageBytes = Buffer.from(SESSION_MESSAGE);
+    // Verify session signature against the protocol-matching message
+    // (provider_id from the row determines which).
+    const sessionMessage = getSessionMessageForProvider(providerId);
+    const messageBytes = Buffer.from(sessionMessage);
     const isValid = nacl.sign.detached.verify(
       messageBytes,
       sessionSigBytes,
@@ -81,8 +98,9 @@ export async function POST(request: NextRequest) {
     }
     const connection = new Connection(rpcUrl, "confirmed");
 
-    // Execute reclaim
-    const result = await reclaimWithSignature({
+    // Execute reclaim via provider
+    const provider = getProvider(providerId);
+    const result = await provider.reclaim({
       connection,
       activityId,
       sessionSignature: sessionSigBytes,
@@ -90,7 +108,7 @@ export async function POST(request: NextRequest) {
       sponsorKeypair,
     });
 
-    return NextResponse.json(result);
+    return NextResponse.json({ ...result, providerId });
   } catch (error: any) {
     console.error("Reclaim error:", error);
 

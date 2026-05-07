@@ -2,8 +2,13 @@ import { NextRequest, NextResponse } from "next/server";
 import { Connection, PublicKey } from "@solana/web3.js";
 import nacl from "tweetnacl";
 
-import { prepareFulfill } from "@/lib/sponsor/prepareAndSubmitFulfill";
-import { SESSION_MESSAGE } from "@/lib/sponsor/prepareAndSubmitSend";
+import {
+  DEFAULT_PROVIDER_ID,
+  getProvider,
+  isProviderId,
+  type ProviderId,
+} from "@/lib/providers";
+import { getSessionMessageForProvider } from "@/lib/session-messages";
 
 export async function POST(request: NextRequest) {
   try {
@@ -29,10 +34,23 @@ export async function POST(request: NextRequest) {
     const {
       activityId,
       payerPublicKey,
+      providerId: providerIdInput,
     }: {
       activityId: string;
       payerPublicKey: string;
+      providerId?: string;
     } = body;
+
+    let providerId: ProviderId = DEFAULT_PROVIDER_ID;
+    if (providerIdInput) {
+      if (!isProviderId(providerIdInput)) {
+        return NextResponse.json(
+          { error: `Unknown providerId: ${providerIdInput}` },
+          { status: 400 }
+        );
+      }
+      providerId = providerIdInput;
+    }
 
     // Validation
     if (!activityId || !payerPublicKey) {
@@ -45,8 +63,9 @@ export async function POST(request: NextRequest) {
     // Parse inputs
     const payerPubKey = new PublicKey(payerPublicKey);
 
-    // Verify session signature proves ownership of payerPublicKey
-    const messageBytes = Buffer.from(SESSION_MESSAGE);
+    // Verify session signature against the protocol-matching message.
+    const sessionMessage = getSessionMessageForProvider(providerId);
+    const messageBytes = Buffer.from(sessionMessage);
     const isValid = nacl.sign.detached.verify(
       messageBytes,
       sessionSigBytes,
@@ -70,15 +89,16 @@ export async function POST(request: NextRequest) {
     }
     const connection = new Connection(rpcUrl, "confirmed");
 
-    // Execute prepare - user pays their own gas fees
-    const result = await prepareFulfill({
+    // Execute prepare via provider - user pays their own gas fees
+    const provider = getProvider(providerId);
+    const result = await provider.prepareFulfill({
       connection,
       activityId,
       payerPublicKey: payerPubKey,
       sessionSignature: sessionSigBytes,
     });
 
-    return NextResponse.json(result);
+    return NextResponse.json({ ...result, providerId });
   } catch (error: any) {
     console.error("Prepare fulfill error:", error);
 

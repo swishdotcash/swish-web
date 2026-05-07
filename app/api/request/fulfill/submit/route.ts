@@ -2,8 +2,13 @@ import { NextRequest, NextResponse } from "next/server";
 import { Connection, PublicKey } from "@solana/web3.js";
 import nacl from "tweetnacl";
 
-import { submitFulfill } from "@/lib/sponsor/prepareAndSubmitFulfill";
-import { SESSION_MESSAGE } from "@/lib/sponsor/prepareAndSubmitSend";
+import {
+  DEFAULT_PROVIDER_ID,
+  getProvider,
+  isProviderId,
+  type ProviderId,
+} from "@/lib/providers";
+import { getSessionMessageForProvider } from "@/lib/session-messages";
 
 export async function POST(request: NextRequest) {
   try {
@@ -31,12 +36,27 @@ export async function POST(request: NextRequest) {
       activityId,
       payerPublicKey,
       lastValidBlockHeight,
+      providerId: providerIdInput,
+      providerContext,
     }: {
       signedDepositTx: string;
       activityId: string;
       payerPublicKey: string;
       lastValidBlockHeight?: number;
+      providerId?: string;
+      providerContext?: Record<string, unknown>;
     } = body;
+
+    let providerId: ProviderId = DEFAULT_PROVIDER_ID;
+    if (providerIdInput) {
+      if (!isProviderId(providerIdInput)) {
+        return NextResponse.json(
+          { error: `Unknown providerId: ${providerIdInput}` },
+          { status: 400 }
+        );
+      }
+      providerId = providerIdInput;
+    }
 
     // Validation
     if (!signedDepositTx || !activityId || !payerPublicKey) {
@@ -49,8 +69,9 @@ export async function POST(request: NextRequest) {
     // Parse inputs
     const payerPubKey = new PublicKey(payerPublicKey);
 
-    // Verify session signature proves ownership of payerPublicKey
-    const messageBytes = Buffer.from(SESSION_MESSAGE);
+    // Verify session signature against the protocol-matching message.
+    const sessionMessage = getSessionMessageForProvider(providerId);
+    const messageBytes = Buffer.from(sessionMessage);
     const isValid = nacl.sign.detached.verify(
       messageBytes,
       sessionSigBytes,
@@ -74,17 +95,19 @@ export async function POST(request: NextRequest) {
     }
     const connection = new Connection(rpcUrl, "confirmed");
 
-    // Execute submit - user already signed and paid their own gas
-    const result = await submitFulfill({
+    // Execute submit via provider - user already signed and paid their own gas
+    const provider = getProvider(providerId);
+    const result = await provider.submitFulfill({
       connection,
       signedDepositTx,
       sessionSignature: sessionSigBytes,
       activityId,
       payerPublicKey: payerPubKey,
       lastValidBlockHeight,
+      providerContext,
     });
 
-    return NextResponse.json(result);
+    return NextResponse.json({ ...result, providerId });
   } catch (error: any) {
     console.error("Submit fulfill error:", error);
 

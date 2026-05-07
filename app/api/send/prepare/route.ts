@@ -2,8 +2,14 @@ import { NextRequest, NextResponse } from "next/server";
 import { Connection, PublicKey } from "@solana/web3.js";
 import nacl from "tweetnacl";
 
-import { prepareSend, SESSION_MESSAGE } from "@/lib/sponsor/prepareAndSubmitSend";
 import { TokenType } from "@/lib/privacycash/tokens";
+import {
+  DEFAULT_PROVIDER_ID,
+  getProvider,
+  isProviderId,
+  type ProviderId,
+} from "@/lib/providers";
+import { getSessionMessageForProvider } from "@/lib/session-messages";
 
 export async function POST(request: NextRequest) {
   try {
@@ -32,13 +38,26 @@ export async function POST(request: NextRequest) {
       amount,
       token,
       message,
+      providerId: providerIdInput,
     }: {
       senderPublicKey: string;
       receiverAddress: string;
       amount: number;
       token: TokenType;
       message?: string;
+      providerId?: string;
     } = body;
+
+    let providerId: ProviderId = DEFAULT_PROVIDER_ID;
+    if (providerIdInput) {
+      if (!isProviderId(providerIdInput)) {
+        return NextResponse.json(
+          { error: `Unknown providerId: ${providerIdInput}` },
+          { status: 400 }
+        );
+      }
+      providerId = providerIdInput;
+    }
 
     // Validation
     if (!senderPublicKey || !receiverAddress || !amount || !token) {
@@ -58,8 +77,11 @@ export async function POST(request: NextRequest) {
     // Parse inputs
     const senderPubKey = new PublicKey(senderPublicKey);
 
-    // Verify session signature proves ownership of senderPublicKey
-    const messageBytes = Buffer.from(SESSION_MESSAGE);
+    // Verify session signature against the protocol-matching message.
+    // Each protocol has its own session message; we validate against the
+    // one matching the provider being dispatched.
+    const sessionMessage = getSessionMessageForProvider(providerId);
+    const messageBytes = Buffer.from(sessionMessage);
     const isValid = nacl.sign.detached.verify(
       messageBytes,
       sessionSigBytes,
@@ -83,8 +105,9 @@ export async function POST(request: NextRequest) {
     }
     const connection = new Connection(rpcUrl, "confirmed");
 
-    // Execute prepare - user pays their own gas fees
-    const result = await prepareSend({
+    // Execute prepare via provider - user pays their own gas fees
+    const provider = getProvider(providerId);
+    const result = await provider.prepare({
       connection,
       senderPublicKey: senderPubKey,
       sessionSignature: sessionSigBytes,
@@ -96,7 +119,8 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({
       ...result,
-      sessionMessage: SESSION_MESSAGE,
+      providerId,
+      sessionMessage,
     });
   } catch (error: any) {
     console.error("Prepare send error:", error);

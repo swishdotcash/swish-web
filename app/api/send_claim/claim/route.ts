@@ -2,7 +2,13 @@ import { NextRequest, NextResponse } from "next/server";
 import { Connection, Keypair } from "@solana/web3.js";
 import bs58 from "bs58";
 
-import { claimWithPassphrase } from "@/lib/sponsor/prepareAndSubmitClaim";
+import {
+  DEFAULT_PROVIDER_ID,
+  getProvider,
+  isProviderId,
+  type ProviderId,
+} from "@/lib/providers";
+import { getActivity } from "@/lib/database";
 
 export async function POST(request: NextRequest) {
   try {
@@ -26,6 +32,16 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // provider_id is stamped on the row at prepare time; read it back to dispatch.
+    // The claimer is a different user from the sender, so we can't trust a body param.
+    const activity = await getActivity(activityId);
+    if (!activity) {
+      return NextResponse.json({ error: "Claim link not found" }, { status: 404 });
+    }
+    const providerId: ProviderId = isProviderId(activity.provider_id ?? "")
+      ? (activity.provider_id as ProviderId)
+      : DEFAULT_PROVIDER_ID;
+
     // Get sponsor keypair (for gas)
     const sponsorKey = process.env.SPONSOR_PRIVATE_KEY;
     if (!sponsorKey) {
@@ -46,8 +62,9 @@ export async function POST(request: NextRequest) {
     }
     const connection = new Connection(rpcUrl, "confirmed");
 
-    // Execute claim
-    const result = await claimWithPassphrase({
+    // Execute claim via provider
+    const provider = getProvider(providerId);
+    const result = await provider.claim({
       connection,
       activityId,
       passphrase,
@@ -55,7 +72,7 @@ export async function POST(request: NextRequest) {
       sponsorKeypair,
     });
 
-    return NextResponse.json(result);
+    return NextResponse.json({ ...result, providerId });
   } catch (error: any) {
     console.error("Claim error:", error);
 

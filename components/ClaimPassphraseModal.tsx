@@ -6,7 +6,8 @@ import Image from "next/image";
 import { Modal } from "./Modal";
 import { Spinner } from "./Spinner";
 import { formatNumber } from "@/utils";
-import { useFee } from "@/hooks/useFee";
+import { useProtocolFee } from "@/hooks/useProtocolFee";
+import type { ProviderId } from "@/lib/providers/types";
 
 interface ClaimPassphraseModalProps {
   isOpen: boolean;
@@ -14,6 +15,7 @@ interface ClaimPassphraseModalProps {
   amount: number;
   activityId: string;
   receiverAddress: string;
+  providerId: ProviderId;
   onSuccess: () => void;
 }
 
@@ -25,14 +27,14 @@ export function ClaimPassphraseModal({
   amount,
   activityId,
   receiverAddress,
+  providerId,
   onSuccess,
 }: ClaimPassphraseModalProps) {
   const [passphrase, setPassphrase] = useState("");
   const [state, setState] = useState<ModalState>("input");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const { baseFee, feePercent } = useFee();
-
-  const partnerFee = baseFee + amount * feePercent;
+  // Fee shown reflects the row's actual protocol picked by the sender.
+  const { feeUSDC: partnerFee } = useProtocolFee(providerId, amount, "send_claim");
   const total = amount - partnerFee;
 
   const handleProceed = async () => {

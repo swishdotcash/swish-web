@@ -2,8 +2,15 @@ import { NextRequest, NextResponse } from "next/server";
 import { Connection, PublicKey } from "@solana/web3.js";
 import nacl from "tweetnacl";
 
-import { submitSend, SESSION_MESSAGE } from "@/lib/sponsor/prepareAndSubmitSend";
 import { TokenType } from "@/lib/privacycash/tokens";
+import {
+  DEFAULT_PROVIDER_ID,
+  getProvider,
+  isProviderId,
+  type ProviderId,
+} from "@/lib/providers";
+import { getActivity } from "@/lib/database";
+import { getSessionMessageForProvider } from "@/lib/session-messages";
 
 export async function POST(request: NextRequest) {
   try {
@@ -34,6 +41,8 @@ export async function POST(request: NextRequest) {
       amount,
       token,
       lastValidBlockHeight,
+      providerId: providerIdInput,
+      providerContext,
     }: {
       signedDepositTx: string;
       activityId: string;
@@ -42,6 +51,8 @@ export async function POST(request: NextRequest) {
       amount: number;
       token: TokenType;
       lastValidBlockHeight?: number;
+      providerId?: string;
+      providerContext?: Record<string, unknown>;
     } = body;
 
     // Validation
@@ -52,11 +63,33 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Resolve provider from the activity row first — prepare may have
+    // stamped it at create (Umbra burner pattern). Fall back to body's
+    // providerId or default for legacy/PC flows that stamp at settle.
+    const activity = await getActivity(activityId);
+    if (!activity) {
+      return NextResponse.json({ error: "Activity not found" }, { status: 404 });
+    }
+
+    let providerId: ProviderId = DEFAULT_PROVIDER_ID;
+    if (activity.provider_id && isProviderId(activity.provider_id)) {
+      providerId = activity.provider_id;
+    } else if (providerIdInput) {
+      if (!isProviderId(providerIdInput)) {
+        return NextResponse.json(
+          { error: `Unknown providerId: ${providerIdInput}` },
+          { status: 400 }
+        );
+      }
+      providerId = providerIdInput;
+    }
+
     // Parse inputs
     const senderPubKey = new PublicKey(senderPublicKey);
 
-    // Verify session signature proves ownership of senderPublicKey
-    const messageBytes = Buffer.from(SESSION_MESSAGE);
+    // Verify session signature against the protocol-matching message.
+    const sessionMessage = getSessionMessageForProvider(providerId);
+    const messageBytes = Buffer.from(sessionMessage);
     const isValid = nacl.sign.detached.verify(
       messageBytes,
       sessionSigBytes,
@@ -80,8 +113,9 @@ export async function POST(request: NextRequest) {
     }
     const connection = new Connection(rpcUrl, "confirmed");
 
-    // Execute submit - user already signed and paid their own gas
-    const result = await submitSend({
+    // Execute submit via provider - user already signed and paid their own gas
+    const provider = getProvider(providerId);
+    const result = await provider.submit({
       connection,
       signedDepositTx,
       sessionSignature: sessionSigBytes,
@@ -91,9 +125,10 @@ export async function POST(request: NextRequest) {
       amount,
       token,
       lastValidBlockHeight,
+      providerContext,
     });
 
-    return NextResponse.json(result);
+    return NextResponse.json({ ...result, providerId });
   } catch (error: any) {
     console.error("Submit send error:", error);
 

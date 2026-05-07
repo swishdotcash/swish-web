@@ -8,7 +8,11 @@ import { useWallets } from "@privy-io/react-auth/solana";
 import { formatNumber } from "@/utils";
 import { Spinner } from "@/components";
 import { useSessionSignature } from "@/hooks/useSessionSignature";
-import { useFee } from "@/hooks/useFee";
+import { useProtocolFee } from "@/hooks/useProtocolFee";
+import { useAutoRoute } from "@/hooks/useAutoRoute";
+import { useUmbraFulfill } from "@/hooks/useUmbraFulfill";
+import { useUmbraStatus } from "@/hooks/useUmbraStatus";
+import type { ProviderId } from "@/lib/providers/types";
 
 interface RequestData {
   id: string;
@@ -31,6 +35,8 @@ type PageState =
   | "cancelled"
   | "cancelling";
 
+type ProviderChoice = "auto" | "privacy-cash" | "magicblock-per" | "umbra";
+
 export default function RequestPage({
   params,
 }: {
@@ -39,11 +45,43 @@ export default function RequestPage({
   const { id } = use(params);
   const { login, authenticated } = usePrivy();
   const { wallets } = useWallets();
-  const { signature, address } = useSessionSignature();
-  const { baseFee, feePercent } = useFee();
+  const { walletAddress, getSignature } = useSessionSignature();
+  // Mint MB session sig — when payer picks MB, server expects MB-signed sig.
+  const { getSignature: getMbSessionSignature } =
+    useSessionSignature("magicblock-per");
+  // Request cancel is protocol-agnostic — uses the Swish request session sig.
+  const { getSignature: getRequestSessionSignature } =
+    useSessionSignature("request");
   const [requestData, setRequestData] = useState<RequestData | null>(null);
   const [pageState, setPageState] = useState<PageState>("loading");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [provider, setProvider] = useState<ProviderChoice>("auto");
+  const { fulfill: umbraFulfill, state: umbraFulfillState } = useUmbraFulfill();
+  const { status: umbraStatus } = useUmbraStatus();
+
+  // Resolve Auto for the payer once we know both addresses (payer's
+  // wallet + requester's address from the row). The hook gracefully
+  // sits idle when inputs aren't ready.
+  const { resolved: autoResolved } = useAutoRoute({
+    enabled: provider === "auto" && !!requestData?.receiverAddress,
+    flow: "fulfill",
+    senderAddress: walletAddress,
+    receiverAddress: requestData?.receiverAddress ?? null,
+  });
+
+  // Effective provider for fee + dispatch. When picker is Auto and we've
+  // resolved, use the resolved one; otherwise fall back to "auto" (fee
+  // hook treats as PC worst-case).
+  const effectiveProvider: ProviderId | "auto" =
+    provider === "auto" ? (autoResolved ?? "auto") : provider;
+
+  // Per-protocol fee, driven by the effective provider so Auto reflects
+  // its resolved route's fee instead of PC worst-case.
+  const { feeUSDC: partnerFee, breakdown: feeBreakdown } = useProtocolFee(
+    effectiveProvider,
+    requestData?.amount ?? 0,
+    "fulfill"
+  );
 
   const solanaWallet = wallets[0];
 
@@ -86,7 +124,7 @@ export default function RequestPage({
       return;
     }
 
-    if (!signature || !address || !requestData?.receiverAddress) {
+    if (!requestData?.receiverAddress) {
       return;
     }
 
@@ -94,61 +132,115 @@ export default function RequestPage({
     setErrorMessage(null);
 
     try {
-      // Step 1: Prepare the transaction
-      const prepareRes = await fetch("/api/request/fulfill/prepare", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Session-Signature": signature,
-        },
-        body: JSON.stringify({
-          activityId: id,
-          payerPublicKey: address,
-        }),
-      });
-
-      if (!prepareRes.ok) {
-        const errorData = await prepareRes.json();
-        throw new Error(errorData.error || "Failed to prepare transaction");
+      // Resolve Auto if needed. For wallet-mode payers (always the case
+      // on /r since requester is always a wallet address), useAutoRoute
+      // has already resolved by the time the user clicks Pay — so this
+      // only fires the preview fetch as a defensive fallback.
+      let dispatchProvider: ProviderId | "auto" = effectiveProvider;
+      if (provider === "auto" && dispatchProvider === "auto") {
+        const previewRes = await fetch(
+          `/api/router/preview?flow=fulfill&sender=${encodeURIComponent(
+            walletAddress || ""
+          )}&receiver=${encodeURIComponent(requestData.receiverAddress)}`
+        );
+        const previewJson = (await previewRes.json()) as {
+          providerId: ProviderId;
+        };
+        dispatchProvider = previewJson.providerId;
       }
 
-      const prepareResult = await prepareRes.json();
+      if (dispatchProvider === "umbra") {
+        // Client-side Umbra fulfill: 3 wallet prompts, requester must be
+        // registered. Fail-fast inside the hook if not.
+        const baseUnits = BigInt(Math.round(requestData.amount * 1_000_000));
+        await umbraFulfill({
+          activityId: id,
+          receiverAddress: requestData.receiverAddress,
+          amountBaseUnits: baseUnits,
+        });
+        setPageState("success");
+        return;
+      }
 
-      // Step 2: Sign the transaction
-      const depositTxBytes = Uint8Array.from(
-        atob(prepareResult.unsignedDepositTx),
-        (c) => c.charCodeAt(0),
-      );
+      // Inner helper — runs the full prepare→sign→submit cycle for a
+      // given non-Umbra provider. Throws on any step's failure.
+      const runMbOrPc = async (target: ProviderId) => {
+        const session =
+          target === "magicblock-per"
+            ? await getMbSessionSignature()
+            : await getSignature();
+        if (!session) {
+          throw new Error("Signature required to continue");
+        }
 
-      const signedDepositResult = await solanaWallet.signTransaction({
-        transaction: depositTxBytes,
-      });
+        const prepareRes = await fetch("/api/request/fulfill/prepare", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Session-Signature": session.signature,
+          },
+          body: JSON.stringify({
+            activityId: id,
+            payerPublicKey: session.address,
+            providerId: target,
+          }),
+        });
 
-      const signedDepositTx = btoa(
-        String.fromCharCode.apply(
-          null,
-          Array.from(signedDepositResult.signedTransaction),
-        ),
-      );
+        if (!prepareRes.ok) {
+          const errorData = await prepareRes.json();
+          throw new Error(errorData.error || "Failed to prepare transaction");
+        }
 
-      // Step 3: Submit the transaction
-      const submitRes = await fetch("/api/request/fulfill/submit", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Session-Signature": signature,
-        },
-        body: JSON.stringify({
-          signedDepositTx,
-          activityId: prepareResult.activityId,
-          payerPublicKey: address,
-          lastValidBlockHeight: prepareResult.lastValidBlockHeight,
-        }),
-      });
+        const prepareResult = await prepareRes.json();
 
-      if (!submitRes.ok) {
-        const errorData = await submitRes.json();
-        throw new Error(errorData.error || "Failed to submit transaction");
+        const depositTxBytes = Uint8Array.from(
+          atob(prepareResult.unsignedDepositTx),
+          (c) => c.charCodeAt(0),
+        );
+
+        const signedDepositResult = await solanaWallet.signTransaction({
+          transaction: depositTxBytes,
+        });
+
+        const signedDepositTx = btoa(
+          String.fromCharCode.apply(
+            null,
+            Array.from(signedDepositResult.signedTransaction),
+          ),
+        );
+
+        const submitRes = await fetch("/api/request/fulfill/submit", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Session-Signature": session.signature,
+          },
+          body: JSON.stringify({
+            signedDepositTx,
+            activityId: prepareResult.activityId,
+            payerPublicKey: session.address,
+            lastValidBlockHeight: prepareResult.lastValidBlockHeight,
+            providerId: target,
+          }),
+        });
+
+        if (!submitRes.ok) {
+          const errorData = await submitRes.json();
+          throw new Error(errorData.error || "Failed to submit transaction");
+        }
+      };
+
+      try {
+        await runMbOrPc(dispatchProvider as ProviderId);
+      } catch (mbErr: any) {
+        // Auto-fallback: MB failed under Auto → retry once with PC.
+        if (provider === "auto" && dispatchProvider === "magicblock-per") {
+          console.warn("MB failed under Auto, falling back to PC:", mbErr);
+          dispatchProvider = "privacy-cash";
+          await runMbOrPc("privacy-cash");
+        } else {
+          throw mbErr;
+        }
       }
 
       setPageState("success");
@@ -167,9 +259,9 @@ export default function RequestPage({
   // Check if current user is the requestor (owner of this request)
   const isRequestor =
     authenticated &&
-    address &&
+    walletAddress &&
     requestData?.receiverAddress &&
-    address.toLowerCase() === requestData.receiverAddress.toLowerCase();
+    walletAddress.toLowerCase() === requestData.receiverAddress.toLowerCase();
 
   const handleCancel = async () => {
     if (!authenticated) {
@@ -177,7 +269,10 @@ export default function RequestPage({
       return;
     }
 
-    if (!signature || !address) {
+    const session = await getRequestSessionSignature();
+    if (!session) {
+      setErrorMessage("Signature required to continue");
+      setPageState("error");
       return;
     }
 
@@ -189,11 +284,11 @@ export default function RequestPage({
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "X-Session-Signature": signature,
+          "X-Session-Signature": session.signature,
         },
         body: JSON.stringify({
           activityId: id,
-          requesterAddress: address,
+          requesterAddress: session.address,
         }),
       });
 
@@ -283,17 +378,35 @@ export default function RequestPage({
   }
 
   if (pageState === "processing" || pageState === "cancelling") {
+    const processingLabel =
+      pageState === "cancelling"
+        ? "Cancelling request..."
+        : provider === "umbra"
+          ? umbraFulfillState.stage === "checking-recipient"
+            ? "Checking requester on Umbra..."
+            : umbraFulfillState.stage === "depositing"
+              ? "Sign each prompt to fulfill privately"
+              : umbraFulfillState.stage === "recording"
+                ? "Finalizing..."
+                : "Preparing private payment..."
+          : "Processing payment...";
     return (
       <main className="flex flex-col items-center justify-center p-4 w-full min-h-[60vh]">
         <Spinner size={48} color="#121212" />
-        <p className="mt-4 text-[#121212]/70">{pageState === "cancelling" ? "Cancelling request..." : "Processing payment..."}</p>
+        <p className="mt-4 text-[#121212]/70">{processingLabel}</p>
+        {pageState === "processing" &&
+          provider === "umbra" &&
+          umbraFulfillState.stage === "depositing" && (
+            <p className="mt-1 text-[#121212]/50 text-xs">
+              ~3 wallet prompts total
+            </p>
+          )}
       </main>
     );
   }
 
   if (!requestData) return null;
 
-  const partnerFee = baseFee + requestData.amount * feePercent;
   const requestorReceives = requestData.amount - partnerFee;
 
   return (
@@ -322,8 +435,27 @@ export default function RequestPage({
             </span>
           </div>
         ) : null}
+        {provider === "auto" && !isRequestor && (
+          <div className="flex justify-between">
+            <span className="text-[#121212]">Routed via</span>
+            <span className="text-[#121212]">
+              {autoResolved === "umbra"
+                ? "Umbra"
+                : autoResolved === "magicblock-per"
+                  ? "MagicBlock"
+                  : autoResolved === "privacy-cash"
+                    ? "Privacy Cash"
+                    : "…"}
+            </span>
+          </div>
+        )}
         <div className="flex justify-between">
-          <span className="text-[#121212]">Partner fees</span>
+          <div>
+            <span className="text-[#121212]">Partner fees</span>
+            <span className="text-[#121212]/40 text-xs ml-1">
+              ({feeBreakdown})
+            </span>
+          </div>
           <span className="text-[#121212]">
             ~{formatNumber(partnerFee)} USDC
           </span>
@@ -341,6 +473,73 @@ export default function RequestPage({
           </span>
         </div>
       </div>
+
+      {/* Privacy provider picker (only for payers, when ready) */}
+      {pageState === "ready" && !isRequestor && (
+        <div className="w-full max-w-[320px] mb-4">
+          <label className="text-sm text-[#121212]/50 mb-1 block">
+            Privacy protocol
+          </label>
+          <div className="flex gap-1.5 flex-wrap">
+            {(
+              [
+                "auto",
+                "privacy-cash",
+                "magicblock-per",
+                "umbra",
+              ] as ProviderChoice[]
+            ).map((p) => {
+              const isUmbraDisabled =
+                p === "umbra" && umbraStatus !== "registered";
+              const label =
+                p === "auto"
+                  ? "Auto"
+                  : p === "privacy-cash"
+                    ? "Privacy Cash"
+                    : p === "magicblock-per"
+                      ? "MagicBlock"
+                      : "Umbra";
+              return (
+                <button
+                  key={p}
+                  onClick={() => {
+                    if (isUmbraDisabled) return;
+                    setProvider(p);
+                  }}
+                  disabled={isUmbraDisabled}
+                  className={`flex-1 min-w-[72px] h-9 rounded-full text-xs font-medium transition-all ${
+                    provider === p
+                      ? "bg-[#121212] text-[#fafafa]"
+                      : isUmbraDisabled
+                        ? "bg-[#121212]/5 text-[#121212]/30 cursor-not-allowed"
+                        : "bg-[#121212]/5 text-[#121212]/70 hover:bg-[#121212]/10"
+                  }`}
+                >
+                  {label}
+                </button>
+              );
+            })}
+          </div>
+          {umbraStatus === "unregistered" && (
+            <p className="text-xs text-[#121212]/50 mt-2">
+              Enable Umbra in your{" "}
+              <a
+                href="/p"
+                className="underline underline-offset-2 decoration-dashed hover:text-[#121212]"
+              >
+                profile
+              </a>{" "}
+              to fulfill via Umbra.
+            </p>
+          )}
+          {provider === "umbra" && umbraStatus === "registered" && (
+            <p className="text-xs text-[#121212]/50 mt-2">
+              Requester must be registered on Umbra. The fulfill will fail
+              cleanly if they aren&apos;t.
+            </p>
+          )}
+        </div>
+      )}
 
       {/* Pay Button (for payers) or Cancel Button (for requestor) */}
       {pageState === "ready" && !isRequestor && (

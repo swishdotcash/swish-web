@@ -289,9 +289,10 @@ export async function simulatedBatchSend(
   const withdrawTx = withdrawResult.tx || String(withdrawResult);
   console.log("Withdraw tx:", withdrawTx);
 
-  // Update activity status to settled
+  // Update activity status to settled — stamp provider_id at settle time
   await updateActivityStatus(activity.id, "settled", {
     tx_hash: withdrawTx,
+    provider_id: "privacy-cash",
   });
   console.log("Activity updated: settled");
 

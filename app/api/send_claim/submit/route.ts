@@ -2,8 +2,14 @@ import { NextRequest, NextResponse } from "next/server";
 import { Connection, PublicKey } from "@solana/web3.js";
 import nacl from "tweetnacl";
 
-import { submitClaim } from "@/lib/sponsor/prepareAndSubmitClaim";
-import { SESSION_MESSAGE } from "@/lib/sponsor/prepareAndSubmitSend";
+import {
+  DEFAULT_PROVIDER_ID,
+  getProvider,
+  isProviderId,
+  type ProviderId,
+} from "@/lib/providers";
+import { getActivity } from "@/lib/database";
+import { getSessionMessageForProvider } from "@/lib/session-messages";
 
 export async function POST(request: NextRequest) {
   try {
@@ -31,11 +37,13 @@ export async function POST(request: NextRequest) {
       activityId,
       senderPublicKey,
       lastValidBlockHeight,
+      providerContext,
     }: {
       signedDepositTx: string;
       activityId: string;
       senderPublicKey: string;
       lastValidBlockHeight?: number;
+      providerContext?: Record<string, unknown>;
     } = body;
 
     // Validation
@@ -46,11 +54,22 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // provider_id is stamped on the row at prepare time; read it back to dispatch.
+    const activity = await getActivity(activityId);
+    if (!activity) {
+      return NextResponse.json({ error: "Activity not found" }, { status: 404 });
+    }
+    const providerId: ProviderId = isProviderId(activity.provider_id ?? "")
+      ? (activity.provider_id as ProviderId)
+      : DEFAULT_PROVIDER_ID;
+
     // Parse inputs
     const senderPubKey = new PublicKey(senderPublicKey);
 
-    // Verify session signature proves ownership of senderPublicKey
-    const messageBytes = Buffer.from(SESSION_MESSAGE);
+    // Verify session signature against the protocol-matching message
+    // (provider_id stamped on the row at prepare time determines which).
+    const sessionMessage = getSessionMessageForProvider(providerId);
+    const messageBytes = Buffer.from(sessionMessage);
     const isValid = nacl.sign.detached.verify(
       messageBytes,
       sessionSigBytes,
@@ -74,17 +93,19 @@ export async function POST(request: NextRequest) {
     }
     const connection = new Connection(rpcUrl, "confirmed");
 
-    // Execute submit - user already signed and paid their own gas
-    const result = await submitClaim({
+    // Execute submit via provider - user already signed and paid their own gas
+    const provider = getProvider(providerId);
+    const result = await provider.submitSendClaim({
       connection,
       signedDepositTx,
       sessionSignature: sessionSigBytes,
       activityId,
       senderPublicKey: senderPubKey,
       lastValidBlockHeight,
+      providerContext,
     });
 
-    return NextResponse.json(result);
+    return NextResponse.json({ ...result, providerId });
   } catch (error: any) {
     console.error("Submit claim link error:", error);
 

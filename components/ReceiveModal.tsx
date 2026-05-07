@@ -6,14 +6,17 @@ import Image from "next/image";
 import { Modal } from "./Modal";
 import { Spinner } from "./Spinner";
 import { formatNumber } from "@/utils";
-import { useFee } from "@/hooks/useFee";
+import { useProtocolFee } from "@/hooks/useProtocolFee";
+import {
+  useSessionSignature,
+  type GetSessionSignature,
+} from "@/hooks/useSessionSignature";
 
 interface ReceiveModalProps {
   isOpen: boolean;
   onClose: () => void;
   amount: string;
-  signature: string | null;
-  requesterAddress: string | null;
+  getSignature: GetSessionSignature;
 }
 
 type ModalState = "input" | "loading" | "success" | "error";
@@ -22,23 +25,31 @@ export function ReceiveModal({
   isOpen,
   onClose,
   amount,
-  signature,
-  requesterAddress,
 }: ReceiveModalProps) {
+  // Request creation is protocol-agnostic — sign with the Swish-scoped
+  // request session sig instead of any protocol's text. The parent prop
+  // `getSignature` (PC by default) is ignored here.
+  const { getSignature } = useSessionSignature("request");
   const [message, setMessage] = useState("");
   const [state, setState] = useState<ModalState>("input");
   const [requestLink, setRequestLink] = useState("");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
-  const { baseFee, feePercent } = useFee();
-
   const numAmount = parseFloat(amount) || 0;
-  const partnerFee = baseFee + numAmount * feePercent;
+  // Requester doesn't pick a protocol — the payer picks at fulfill time.
+  // Show worst-case fee (PC, the auto-router default). Other protocols
+  // may charge less (MB ~0, Umbra 0).
+  const { feeUSDC: partnerFee, breakdown: feeBreakdown } = useProtocolFee(
+    "auto",
+    numAmount,
+    "fulfill"
+  );
   const youReceive = numAmount - partnerFee;
 
   const handleProceed = async () => {
-    if (!signature || !requesterAddress) {
-      setErrorMessage("Please connect your wallet first");
+    const session = await getSignature();
+    if (!session) {
+      setErrorMessage("Signature required to continue");
       setState("error");
       return;
     }
@@ -51,10 +62,10 @@ export function ReceiveModal({
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "X-Session-Signature": signature,
+          "X-Session-Signature": session.signature,
         },
         body: JSON.stringify({
-          requesterAddress,
+          requesterAddress: session.address,
           amount: numAmount,
           token: "USDC",
           message: message.trim() || undefined,
