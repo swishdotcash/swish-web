@@ -8,7 +8,7 @@
   "scripts": {
     "postinstall": "node scripts/patch-privacycash.js",
     "dev": "next dev",
-    "build": "next build",
+    "build": "next build --webpack",
     "start": "next start",
     "lint": "eslint",
     "test:dry": "tsx tests/dry-run.test.ts",
