@@ -89,7 +89,7 @@ export async function prepareUmbraSend(
   const registered = await isAddressRegisteredOnUmbra(receiverAddress);
   if (!registered) {
     throw new Error(
-      "Recipient not registered on Umbra — switch to Privacy Cash or MagicBlock"
+      "Recipient not registered on Umbra"
     );
   }
 
@@ -320,7 +320,7 @@ export async function prepareUmbraFulfill(
   const registered = await isAddressRegisteredOnUmbra(requesterAddress);
   if (!registered) {
     throw new Error(
-      "Requester not registered on Umbra — fulfill via Privacy Cash or MagicBlock"
+      "Requester not registered on Umbra"
     );
   }
 

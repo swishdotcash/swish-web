@@ -512,9 +512,7 @@ export function SendModal({
                 {umbraStatus === "registered" &&
                   recipientUmbraStatus === "unregistered" && (
                     <p className="text-xs text-[#121212]/50 mt-2">
-                      Recipient is not registered on Umbra — pick MagicBlock
-                      or Privacy Cash, or have them enable Umbra in their
-                      profile.
+                      Recipient is not registered on Umbra
                     </p>
                   )}
               </div>
