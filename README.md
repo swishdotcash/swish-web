@@ -14,7 +14,7 @@ Swish is the consumer layer for privacy on Solana. It aggregates across the unde
 - **Request** — Create payment requests others can fulfill
 - **Send & Claim** — USDC via passphrase-protected claim links; sender can reclaim if unclaimed
 - **Deposit** — QR + copyable address for receiving SOL/USDC
-- **Withdraw** — Gas-sponsored USDC transfer (for Twitter-onboarded wallets)
+- **Withdraw** — Gas-sponsored USDC transfer
 - **Export** — Self-custody the Privy embedded wallet at any time
 
 ---
