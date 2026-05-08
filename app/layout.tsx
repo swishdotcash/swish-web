@@ -16,19 +16,19 @@ const jost = Jost({
 export const metadata: Metadata = {
   metadataBase: new URL(process.env.NEXT_PUBLIC_APP_URL || "https://swish.privacy.cash"),
   title: "Swish",
-  description: "Venmo, but private",
+  description: "Privacy, made simple",
   icons: {
     icon: "/assets/logo.svg",
   },
   openGraph: {
     title: "Swish",
-    description: "Venmo, but private",
+    description: "Privacy, made simple",
     images: ["/assets/open-graph-main.png"],
   },
   twitter: {
     card: "summary_large_image",
     title: "Swish",
-    description: "Venmo, but private",
+    description: "Privacy, made simple",
     images: ["/assets/open-graph-main.png"],
   },
 };
