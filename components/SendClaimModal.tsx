@@ -237,7 +237,10 @@ export function SendClaimModal({
                 </button>
                 <div className="flex gap-1.5">
                   {(
-                    ["magicblock-per", "privacy-cash"] as ProviderId[]
+                    ["magicblock-per", "privacy-cash"] as (
+                      | "magicblock-per"
+                      | "privacy-cash"
+                    )[]
                   ).map((p) => {
                     return (
                       <button
