@@ -12,3 +12,5 @@ export { QRScanner } from "./QRScanner";
 export { AddFundsModal } from "./AddFundsModal";
 export { WithdrawModal } from "./WithdrawModal";
 export { UnlockModal } from "./UnlockModal";
+export { ProtocolBadge } from "./ProtocolBadge";
+export { WalletStatus } from "./WalletStatus";

@@ -133,7 +133,7 @@ export default function Home() {
           <div className="w-full max-w-[320px] overflow-x-auto scrollbar-hide">
             <input
               type="text"
-              value={amount}
+              value={`$${amount}`}
               readOnly
               disabled
               className="w-full text-6xl font-light text-[#121212] bg-transparent border-none outline-none text-center cursor-default select-none caret-transparent"

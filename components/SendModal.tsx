@@ -7,6 +7,7 @@ import { PublicKey } from "@solana/web3.js";
 import { Modal } from "./Modal";
 import { Spinner } from "./Spinner";
 import { QRScanner } from "./QRScanner";
+import { ProtocolBadge } from "./ProtocolBadge";
 import { formatNumber } from "@/utils";
 import { useSendTransaction } from "@/hooks/useSendTransaction";
 import { useUmbraSend } from "@/hooks/useUmbraSend";
@@ -446,50 +447,53 @@ export function SendModal({
                 <label className="text-sm text-[#121212]/50 mb-1 block">
                   Privacy protocol
                 </label>
-                <div className="flex gap-1.5 flex-wrap">
-                  {(
-                    [
-                      "auto",
-                      "privacy-cash",
-                      "magicblock-per",
-                      "umbra",
-                    ] as ProviderChoice[]
-                  ).map((p) => {
-                    const senderUmbraDisabled =
-                      p === "umbra" && umbraStatus !== "registered";
-                    const recipientUmbraDisabled =
-                      p === "umbra" &&
-                      recipientUmbraStatus === "unregistered";
-                    const isUmbraDisabled =
-                      senderUmbraDisabled || recipientUmbraDisabled;
-                    const label =
-                      p === "auto"
-                        ? "Auto"
-                        : p === "privacy-cash"
-                          ? "Privacy Cash"
-                          : p === "magicblock-per"
-                            ? "MagicBlock"
-                            : "Umbra";
-                    return (
-                      <button
-                        key={p}
-                        onClick={() => {
-                          if (isUmbraDisabled) return;
-                          setProvider(p);
-                        }}
-                        disabled={isUmbraDisabled}
-                        className={`flex-1 min-w-[72px] h-9 rounded-full text-xs font-medium transition-all ${
-                          provider === p
-                            ? "bg-[#121212] text-[#fafafa]"
-                            : isUmbraDisabled
-                              ? "bg-[#121212]/5 text-[#121212]/30 cursor-not-allowed"
-                              : "bg-[#121212]/5 text-[#121212]/70 hover:bg-[#121212]/10"
-                        }`}
-                      >
-                        {label}
-                      </button>
-                    );
-                  })}
+                <div className="space-y-1.5">
+                  <button
+                    onClick={() => setProvider("auto")}
+                    className={`w-fit min-w-[72px] h-9 px-4 rounded-full text-xs font-medium transition-all flex items-center justify-center ${
+                      provider === "auto"
+                        ? "bg-[#121212] text-[#fafafa]"
+                        : "bg-[#121212]/5 text-[#121212]/70 hover:bg-[#121212]/10"
+                    }`}
+                  >
+                    Auto
+                  </button>
+                  <div className="flex gap-1.5">
+                    {(
+                      [
+                        "umbra",
+                        "magicblock-per",
+                        "privacy-cash",
+                      ] as ProviderId[]
+                    ).map((p) => {
+                      const senderUmbraDisabled =
+                        p === "umbra" && umbraStatus !== "registered";
+                      const recipientUmbraDisabled =
+                        p === "umbra" &&
+                        recipientUmbraStatus === "unregistered";
+                      const isUmbraDisabled =
+                        senderUmbraDisabled || recipientUmbraDisabled;
+                      return (
+                        <button
+                          key={p}
+                          onClick={() => {
+                            if (isUmbraDisabled) return;
+                            setProvider(p);
+                          }}
+                          disabled={isUmbraDisabled}
+                          className={`flex-1 min-w-[72px] h-9 rounded-full text-xs font-medium transition-all flex items-center justify-center ${
+                            provider === p
+                              ? "bg-[#121212] text-[#fafafa]"
+                              : isUmbraDisabled
+                                ? "bg-[#121212]/5 text-[#121212]/30 cursor-not-allowed opacity-40"
+                                : "bg-[#121212]/5 text-[#121212]/70 hover:bg-[#121212]/10"
+                          }`}
+                        >
+                          <ProtocolBadge providerId={p} iconSize={14} />
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
                 {umbraStatus === "unregistered" && (
                   <p className="text-xs text-[#121212]/50 mt-2">
@@ -530,15 +534,11 @@ export function SendModal({
                     (recipientType === "x" && isValidXHandle)) && (
                     <div className="flex justify-between">
                       <span className="text-[#121212]">Routed via</span>
-                      <span className="text-[#121212]">
-                        {autoResolved === "umbra"
-                          ? "Umbra"
-                          : autoResolved === "magicblock-per"
-                            ? "MagicBlock"
-                            : autoResolved === "privacy-cash"
-                              ? "Privacy Cash"
-                              : "…"}
-                      </span>
+                      {autoResolved ? (
+                        <ProtocolBadge providerId={autoResolved} />
+                      ) : (
+                        <span className="text-[#121212]">…</span>
+                      )}
                     </div>
                   )}
                 <div className="flex justify-between">

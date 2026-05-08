@@ -6,7 +6,7 @@ import Image from "next/image";
 import { usePrivy } from "@privy-io/react-auth";
 import { useWallets } from "@privy-io/react-auth/solana";
 import { formatNumber } from "@/utils";
-import { Spinner } from "@/components";
+import { Spinner, ProtocolBadge, WalletStatus } from "@/components";
 import { useSessionSignature } from "@/hooks/useSessionSignature";
 import { useProtocolFee } from "@/hooks/useProtocolFee";
 import { useAutoRoute } from "@/hooks/useAutoRoute";
@@ -58,6 +58,9 @@ export default function RequestPage({
   const [provider, setProvider] = useState<ProviderChoice>("auto");
   const { fulfill: umbraFulfill, state: umbraFulfillState } = useUmbraFulfill();
   const { status: umbraStatus } = useUmbraStatus();
+  const [requesterUmbraStatus, setRequesterUmbraStatus] = useState<
+    "idle" | "checking" | "registered" | "unregistered" | "error"
+  >("idle");
 
   // Resolve Auto for the payer once we know both addresses (payer's
   // wallet + requester's address from the row). The hook gracefully
@@ -117,6 +120,40 @@ export default function RequestPage({
 
     fetchRequestData();
   }, [id]);
+
+  // Pre-check requester's Umbra registration so the picker can disable
+  // Umbra upfront instead of letting the fulfill fail at runtime. We don't
+  // surface the result in any visible copy — only used to gate the picker.
+  useEffect(() => {
+    const addr = requestData?.receiverAddress;
+    if (!addr) {
+      setRequesterUmbraStatus("idle");
+      return;
+    }
+    let cancelled = false;
+    setRequesterUmbraStatus("checking");
+    (async () => {
+      try {
+        const res = await fetch(
+          `/api/umbra/status?address=${encodeURIComponent(addr)}`
+        );
+        if (cancelled) return;
+        if (!res.ok) {
+          setRequesterUmbraStatus("error");
+          return;
+        }
+        const json = (await res.json()) as { registered: boolean };
+        setRequesterUmbraStatus(
+          json.registered ? "registered" : "unregistered"
+        );
+      } catch {
+        if (!cancelled) setRequesterUmbraStatus("error");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [requestData?.receiverAddress]);
 
   const handlePay = async () => {
     if (!authenticated) {
@@ -412,7 +449,7 @@ export default function RequestPage({
   return (
     <main className="flex flex-col items-center p-4 w-full">
       {/* Amount Display */}
-      <div className="flex flex-col items-center mb-8 w-full max-w-full">
+      <div className="flex flex-col items-center mb-6 w-full max-w-full">
         <div className="w-full max-w-[320px] overflow-x-auto scrollbar-hide">
           <p className="text-6xl font-light text-[#121212] text-center">
             ${formatNumber(requestData.amount)}
@@ -425,28 +462,20 @@ export default function RequestPage({
         )}
       </div>
 
+      <div className="w-full flex justify-center mb-6">
+        <WalletStatus />
+      </div>
+
       {/* Details */}
       <div className="w-full max-w-[320px] space-y-2 mb-8">
-        {requestData.receiverAddress ? (
-          <div className="flex justify-between">
-            <span className="text-[#121212]">Requested by</span>
-            <span className="text-[#121212]">
-              {formatAddress(requestData.receiverAddress)}
-            </span>
-          </div>
-        ) : null}
         {provider === "auto" && !isRequestor && (
           <div className="flex justify-between">
             <span className="text-[#121212]">Routed via</span>
-            <span className="text-[#121212]">
-              {autoResolved === "umbra"
-                ? "Umbra"
-                : autoResolved === "magicblock-per"
-                  ? "MagicBlock"
-                  : autoResolved === "privacy-cash"
-                    ? "Privacy Cash"
-                    : "…"}
-            </span>
+            {autoResolved ? (
+              <ProtocolBadge providerId={autoResolved} />
+            ) : (
+              <span className="text-[#121212]">…</span>
+            )}
           </div>
         )}
         <div className="flex justify-between">
@@ -475,52 +504,57 @@ export default function RequestPage({
       </div>
 
       {/* Privacy provider picker (only for payers, when ready) */}
-      {pageState === "ready" && !isRequestor && (
+      {pageState === "ready" && authenticated && !isRequestor && (
         <div className="w-full max-w-[320px] mb-4">
           <label className="text-sm text-[#121212]/50 mb-1 block">
             Privacy protocol
           </label>
-          <div className="flex gap-1.5 flex-wrap">
-            {(
-              [
-                "auto",
-                "privacy-cash",
-                "magicblock-per",
-                "umbra",
-              ] as ProviderChoice[]
-            ).map((p) => {
-              const isUmbraDisabled =
-                p === "umbra" && umbraStatus !== "registered";
-              const label =
-                p === "auto"
-                  ? "Auto"
-                  : p === "privacy-cash"
-                    ? "Privacy Cash"
-                    : p === "magicblock-per"
-                      ? "MagicBlock"
-                      : "Umbra";
-              return (
-                <button
-                  key={p}
-                  onClick={() => {
-                    if (isUmbraDisabled) return;
-                    setProvider(p);
-                  }}
-                  disabled={isUmbraDisabled}
-                  className={`flex-1 min-w-[72px] h-9 rounded-full text-xs font-medium transition-all ${
-                    provider === p
-                      ? "bg-[#121212] text-[#fafafa]"
-                      : isUmbraDisabled
-                        ? "bg-[#121212]/5 text-[#121212]/30 cursor-not-allowed"
-                        : "bg-[#121212]/5 text-[#121212]/70 hover:bg-[#121212]/10"
-                  }`}
-                >
-                  {label}
-                </button>
-              );
-            })}
+          <div className="space-y-1.5">
+            <button
+              onClick={() => setProvider("auto")}
+              className={`w-fit min-w-[72px] h-9 px-4 rounded-full text-xs font-medium transition-all flex items-center justify-center ${
+                provider === "auto"
+                  ? "bg-[#121212] text-[#fafafa]"
+                  : "bg-[#121212]/5 text-[#121212]/70 hover:bg-[#121212]/10"
+              }`}
+            >
+              Auto
+            </button>
+            <div className="flex gap-1.5">
+              {(
+                [
+                  "umbra",
+                  "magicblock-per",
+                  "privacy-cash",
+                ] as ProviderId[]
+              ).map((p) => {
+                const isUmbraDisabled =
+                  p === "umbra" &&
+                  (umbraStatus !== "registered" ||
+                    requesterUmbraStatus === "unregistered");
+                return (
+                  <button
+                    key={p}
+                    onClick={() => {
+                      if (isUmbraDisabled) return;
+                      setProvider(p);
+                    }}
+                    disabled={isUmbraDisabled}
+                    className={`flex-1 min-w-[72px] h-9 rounded-full text-xs font-medium transition-all flex items-center justify-center ${
+                      provider === p
+                        ? "bg-[#121212] text-[#fafafa]"
+                        : isUmbraDisabled
+                          ? "bg-[#121212]/5 text-[#121212]/30 cursor-not-allowed opacity-40"
+                          : "bg-[#121212]/5 text-[#121212]/70 hover:bg-[#121212]/10"
+                    }`}
+                  >
+                    <ProtocolBadge providerId={p} iconSize={14} />
+                  </button>
+                );
+              })}
+            </div>
           </div>
-          {umbraStatus === "unregistered" && (
+          {authenticated && umbraStatus === "unregistered" && (
             <p className="text-xs text-[#121212]/50 mt-2">
               Enable Umbra in your{" "}
               <a
@@ -532,12 +566,6 @@ export default function RequestPage({
               to fulfill via Umbra.
             </p>
           )}
-          {provider === "umbra" && umbraStatus === "registered" && (
-            <p className="text-xs text-[#121212]/50 mt-2">
-              Requester must be registered on Umbra. The fulfill will fail
-              cleanly if they aren&apos;t.
-            </p>
-          )}
         </div>
       )}
 
@@ -546,9 +574,9 @@ export default function RequestPage({
         <motion.button
           onClick={handlePay}
           whileTap={{ scale: 0.98 }}
-          className="w-full max-w-[320px] h-12 bg-[#121212] rounded-full flex items-center justify-center shadow-[0_4px_12px_rgba(18,18,18,0.15)]"
+          className="w-full max-w-[320px] h-12 bg-[#121212] rounded-full flex items-center justify-center text-[#fafafa] font-semibold shadow-[0_4px_12px_rgba(18,18,18,0.15)]"
         >
-          <Image src="/assets/send.svg" alt="Pay" width={24} height={24} />
+          Fulfill
         </motion.button>
       )}
 
