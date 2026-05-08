@@ -11,7 +11,7 @@ export function Footer() {
   const isProfile = pathname === "/p";
 
   return (
-    <nav className="flex justify-center pb-6">
+    <nav className="sticky bottom-0 z-10 flex justify-center pt-4 pb-6">
       <div
         className="flex items-center gap-1 px-2 py-2 rounded-full"
         style={{

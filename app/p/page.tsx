@@ -12,7 +12,9 @@ import {
   AddFundsModal,
   WithdrawModal,
   UnlockModal,
+  ProtocolBadge,
 } from "@/components";
+import { isProviderId } from "@/lib/providers/types";
 import { useSessionSignature } from "@/hooks/useSessionSignature";
 import { useUSDCBalance } from "@/hooks/useUSDCBalance";
 import { useSOLBalance } from "@/hooks/useSOLBalance";
@@ -30,6 +32,7 @@ interface Activity {
   created_at: string;
   sender_address: string | null;
   receiver_address: string | null;
+  provider_id: string | null;
 }
 
 interface Stats {
@@ -235,7 +238,16 @@ export default function ProfilePage() {
           className="mt-0.5 invert"
         />
         <div className="flex-1 min-w-0">
-          <p className="text-[#121212] text-sm">{getActivityLabel(activity)}</p>
+          <div className="flex items-center gap-1.5">
+            <p className="text-[#121212] text-sm">{getActivityLabel(activity)}</p>
+            {activity.provider_id && isProviderId(activity.provider_id) && (
+              <ProtocolBadge
+                providerId={activity.provider_id}
+                iconSize={12}
+                showLabel={false}
+              />
+            )}
+          </div>
           <p
             className="text-xs font-normal uppercase"
             style={{ color: STATUS_COLORS[activity.status] }}
@@ -438,19 +450,24 @@ export default function ProfilePage() {
                 </div>
               </div>
 
-              {/* Privacy section */}
+              {/* Umbra section */}
               <div className="mb-6 border-t border-[#121212]/10 pt-4">
-                <p className="text-[#121212]/50 text-xs uppercase tracking-wide mb-3">
-                  Privacy
-                </p>
                 <div className="flex items-center justify-between gap-3">
                   <div className="flex-1 min-w-0">
-                    <p className="text-[#121212] text-sm font-medium">Umbra</p>
-                    <p className="text-[#121212]/50 text-xs">
-                      {isUmbraRegistered
-                        ? "You can send and receive private USDC via Umbra"
-                        : "Enable to receive private USDC via Umbra"}
-                    </p>
+                    <div className="flex items-center gap-2 text-[#121212] text-sm font-medium">
+                      <Image
+                        src="/assets/Umbra-Logo-1.png"
+                        alt=""
+                        width={16}
+                        height={16}
+                      />
+                      <span>Umbra</span>
+                    </div>
+                    {!isUmbraRegistered && (
+                      <p className="text-[#121212]/50 text-xs mt-0.5">
+                        Enable to receive private USDC via Umbra
+                      </p>
+                    )}
                   </div>
                   {isUmbraRegistered ? (
                     <span className="text-xs font-medium text-[#008834] px-2.5 py-1 rounded-full bg-[#008834]/10 whitespace-nowrap">
@@ -482,23 +499,25 @@ export default function ProfilePage() {
                   </p>
                 )}
 
-                {/* Shielded balance + pending rows (only when registered) */}
+                {/* Shielded balance + Reveal/Unlock (registered only) */}
                 {isUmbraRegistered && (
-                  <div className="mt-4 pt-3 border-t border-[#121212]/5">
+                  <div className="mt-3">
                     <div className="flex items-center justify-between gap-3">
                       <div className="flex-1 min-w-0">
                         <p className="text-[#121212]/50 text-xs">
                           Shielded balance
                         </p>
-                        <p className="text-[#121212] text-sm font-medium">
-                          {umbraBalanceStatus === "needs-reveal"
-                            ? "Hidden"
-                            : umbraBalanceStatus === "loading"
-                              ? "Revealing..."
-                              : umbraBalanceStatus === "error"
-                                ? "—"
-                                : `${formatNumber(umbraBalanceUSDC || 0)} USDC`}
-                        </p>
+                        <div className="text-[#121212] text-sm font-medium h-5 flex items-center">
+                          {umbraBalanceStatus === "needs-reveal" ? (
+                            "Hidden"
+                          ) : umbraBalanceStatus === "loading" ? (
+                            <Spinner size={14} color="#121212" />
+                          ) : umbraBalanceStatus === "error" ? (
+                            "—"
+                          ) : (
+                            `${formatNumber(umbraBalanceUSDC || 0)} USDC`
+                          )}
+                        </div>
                       </div>
                       {umbraBalanceStatus === "needs-reveal" ||
                       umbraBalanceStatus === "loading" ? (

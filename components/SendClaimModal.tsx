@@ -5,6 +5,7 @@ import { motion, AnimatePresence } from "motion/react";
 import Image from "next/image";
 import { Modal } from "./Modal";
 import { Spinner } from "./Spinner";
+import { ProtocolBadge } from "./ProtocolBadge";
 import { formatNumber } from "@/utils";
 import { useSendClaimTransaction } from "@/hooks/useSendClaimTransaction";
 import { useProtocolFee } from "@/hooks/useProtocolFee";
@@ -223,30 +224,36 @@ export function SendClaimModal({
               <label className="text-sm text-[#121212]/50 mb-1 block">
                 Privacy protocol
               </label>
-              <div className="flex gap-1.5 flex-wrap">
-                {(
-                  ["auto", "privacy-cash", "magicblock-per"] as ProviderChoice[]
-                ).map((p) => {
-                  const label =
-                    p === "auto"
-                      ? "Auto"
-                      : p === "privacy-cash"
-                        ? "Privacy Cash"
-                        : "MagicBlock";
-                  return (
-                    <button
-                      key={p}
-                      onClick={() => setProvider(p)}
-                      className={`flex-1 min-w-[72px] h-9 rounded-full text-xs font-medium transition-all ${
-                        provider === p
-                          ? "bg-[#121212] text-[#fafafa]"
-                          : "bg-[#121212]/5 text-[#121212]/70 hover:bg-[#121212]/10"
-                      }`}
-                    >
-                      {label}
-                    </button>
-                  );
-                })}
+              <div className="space-y-1.5">
+                <button
+                  onClick={() => setProvider("auto")}
+                  className={`w-fit min-w-[72px] h-9 px-4 rounded-full text-xs font-medium transition-all flex items-center justify-center ${
+                    provider === "auto"
+                      ? "bg-[#121212] text-[#fafafa]"
+                      : "bg-[#121212]/5 text-[#121212]/70 hover:bg-[#121212]/10"
+                  }`}
+                >
+                  Auto
+                </button>
+                <div className="flex gap-1.5">
+                  {(
+                    ["magicblock-per", "privacy-cash"] as ProviderId[]
+                  ).map((p) => {
+                    return (
+                      <button
+                        key={p}
+                        onClick={() => setProvider(p)}
+                        className={`flex-1 min-w-[72px] h-9 rounded-full text-xs font-medium transition-all flex items-center justify-center ${
+                          provider === p
+                            ? "bg-[#121212] text-[#fafafa]"
+                            : "bg-[#121212]/5 text-[#121212]/70 hover:bg-[#121212]/10"
+                        }`}
+                      >
+                        <ProtocolBadge providerId={p} iconSize={14} />
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
             </div>
 
@@ -259,13 +266,7 @@ export function SendClaimModal({
               {provider === "auto" && autoResolved && (
                 <div className="flex justify-between">
                   <span className="text-[#121212]">Routed via</span>
-                  <span className="text-[#121212]">
-                    {autoResolved === "magicblock-per"
-                      ? "MagicBlock"
-                      : autoResolved === "privacy-cash"
-                        ? "Privacy Cash"
-                        : "…"}
-                  </span>
+                  <ProtocolBadge providerId={autoResolved} />
                 </div>
               )}
               <div className="flex justify-between">

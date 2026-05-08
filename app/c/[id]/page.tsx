@@ -5,7 +5,12 @@ import { motion } from "motion/react";
 import Image from "next/image";
 import { usePrivy } from "@privy-io/react-auth";
 import { formatNumber } from "@/utils";
-import { Spinner, ClaimPassphraseModal } from "@/components";
+import {
+  Spinner,
+  ClaimPassphraseModal,
+  ProtocolBadge,
+  WalletStatus,
+} from "@/components";
 import { useSessionSignature } from "@/hooks/useSessionSignature";
 import { useProtocolFee } from "@/hooks/useProtocolFee";
 import {
@@ -232,21 +237,16 @@ export default function ClaimPage({ params }: { params: Promise<{ id: string }> 
 
   const youReceive = claimData.amount - partnerFee;
 
-  const providerLabel: Record<ProviderId, string> = {
-    "privacy-cash": "Privacy Cash",
-    "magicblock-per": "MagicBlock",
-    umbra: "Umbra",
-  };
-  const senderProviderLabel =
+  const senderProviderId =
     claimData.providerId && isProviderId(claimData.providerId)
-      ? providerLabel[claimData.providerId as ProviderId]
+      ? (claimData.providerId as ProviderId)
       : null;
 
   return (
     <>
       <main className="flex flex-col items-center p-4 w-full">
         {/* Amount Display */}
-        <div className="flex flex-col items-center mb-8 w-full max-w-full">
+        <div className="flex flex-col items-center mb-6 w-full max-w-full">
           <div className="w-full max-w-[320px] overflow-x-auto scrollbar-hide">
             <p className="text-6xl font-light text-[#121212] text-center">
               ${formatNumber(claimData.amount)}
@@ -259,12 +259,16 @@ export default function ClaimPage({ params }: { params: Promise<{ id: string }> 
           )}
         </div>
 
+        <div className="w-full flex justify-center mb-6">
+          <WalletStatus />
+        </div>
+
         {/* Details */}
         <div className="w-full max-w-[320px] space-y-2 mb-8">
-          {senderProviderLabel && (
+          {senderProviderId && (
             <div className="flex justify-between">
               <span className="text-[#121212]">Sent via</span>
-              <span className="text-[#121212]">{senderProviderLabel}</span>
+              <ProtocolBadge providerId={senderProviderId} />
             </div>
           )}
           <div className="flex justify-between">
@@ -282,18 +286,18 @@ export default function ClaimPage({ params }: { params: Promise<{ id: string }> 
         </div>
 
         {/* Claim Button (for receivers) */}
-        {pageState === "ready" && !claimData?.isSender && (
+        {pageState === "ready" && (!authenticated || !claimData?.isSender) && (
           <motion.button
             onClick={handleClaim}
             whileTap={{ scale: 0.98 }}
-            className="w-full max-w-[320px] h-12 bg-[#121212] rounded-full flex items-center justify-center shadow-[0_4px_12px_rgba(18,18,18,0.15)]"
+            className="w-full max-w-[320px] h-12 bg-[#121212] rounded-full flex items-center justify-center text-[#fafafa] font-semibold shadow-[0_4px_12px_rgba(18,18,18,0.15)]"
           >
-            <Image src="/assets/receive.svg" alt="Claim" width={24} height={24} />
+            Claim
           </motion.button>
         )}
 
         {/* Reclaim Button (for sender only) */}
-        {pageState === "ready" && claimData?.isSender && (
+        {pageState === "ready" && authenticated && claimData?.isSender && (
           <motion.button
             onClick={handleReclaim}
             whileTap={{ scale: 0.98 }}
