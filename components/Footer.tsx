@@ -51,6 +51,15 @@ export function Footer() {
       <div className="flex justify-center pb-4">
         <div className="flex items-center gap-2 text-xs text-[#121212]/40">
           <a
+            href="https://x.com/swishdotcash"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="hover:text-[#121212]/70 transition-colors"
+          >
+            X
+          </a>
+          <span>·</span>
+          <a
             href="https://docs.swish.cash"
             target="_blank"
             rel="noopener noreferrer"
