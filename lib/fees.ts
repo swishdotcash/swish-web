@@ -7,9 +7,10 @@
  *   MB     0.1%                        (verified live 2026-05-14: $1 send
  *                                       debited 1.001, $2 debited 2.002. Not
  *                                       in MB's OpenAPI spec but empirically
- *                                       consistent. Charged via exactOut:false
- *                                       so it comes out of the recipient
- *                                       amount, not on top of the sender.)
+ *                                       consistent. Charged on top of the
+ *                                       sender — MB's exactOut flag does not
+ *                                       move it off the sender; both values
+ *                                       tested live.)
  *   Umbra  0.7% on claim, all flows    (claim is unavoidable — SDK has no
  *                                       receiver-side path that skips it)
  */
@@ -35,10 +36,10 @@ export function estimatePcFee(
   };
 }
 
-// MB: 0.1% on the transfer amount. Verified live 2026-05-14 — not documented
-// in MB's OpenAPI spec, but consistent across test sends. Charged via
-// exactOut:false (see magicBlockProvider), so it's deducted from the recipient
-// amount rather than added on top of the sender.
+// MB: 0.1% on the transfer amount, charged on top of the sender (a $1 send
+// debits 1.001). Verified live 2026-05-14 — not in MB's OpenAPI spec but
+// consistent across test sends. MB's exactOut flag does not move the fee off
+// the sender (both values tested live).
 export function estimateMbFee(amount: number): FeeEstimate {
   return {
     feeUSDC: amount * 0.001,
