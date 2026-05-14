@@ -98,12 +98,13 @@ async function buildPrivateTransfer(params: {
   const { from, to, amount, token } = params;
   const mint = TOKEN_MINTS[token].toBase58();
   // MB charges 0.1% on top of the requested amount. Request amount / 1.001
-  // so MB's "requested + 0.1%" lands back at exactly the amount the sender
-  // entered — the fee effectively comes out of what the recipient receives
-  // (matching PC / Umbra), and a user can always send their full balance.
-  // floor() keeps the debit at or just under the entered amount, never over.
+  // so MB's "requested + 0.1%" lands back at the amount the sender entered —
+  // the fee effectively comes out of what the recipient receives (matching
+  // PC / Umbra), and a user can always send their full balance.
+  // round() (not floor) so the debit lands on the entered amount rather than
+  // ~1 base unit under it — floor made a "1.000000" send sign as "0.999999".
   const enteredBaseUnits = toBaseUnits(amount, token);
-  const baseUnits = Math.floor(enteredBaseUnits / 1.001);
+  const baseUnits = Math.round(enteredBaseUnits / 1.001);
 
   const response = await magicBlockTransfer({
     from: from.toBase58(),
