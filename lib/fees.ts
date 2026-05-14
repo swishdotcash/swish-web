@@ -4,13 +4,13 @@
  *
  * Per-protocol summary:
  *   PC     $0.71 base + 0.35%          (Pyth-derived base + bps)
- *   MB     0.1%                        (verified live 2026-05-14: $1 send
- *                                       debited 1.001, $2 debited 2.002. Not
- *                                       in MB's OpenAPI spec but empirically
- *                                       consistent. Charged on top of the
- *                                       sender — MB's exactOut flag does not
- *                                       move it off the sender; both values
- *                                       tested live.)
+ *   MB     0.1%                        (verified live 2026-05-14. MB charges
+ *                                       it on top of the sender, but
+ *                                       magicBlockProvider requests
+ *                                       amount / 1.001 so the sender's debit
+ *                                       == the entered amount and the fee
+ *                                       comes out of what the recipient gets,
+ *                                       like PC / Umbra.)
  *   Umbra  0.7% on claim, all flows    (claim is unavoidable — SDK has no
  *                                       receiver-side path that skips it)
  */
@@ -36,13 +36,13 @@ export function estimatePcFee(
   };
 }
 
-// MB: 0.1% on the transfer amount, charged on top of the sender (a $1 send
-// debits 1.001). Verified live 2026-05-14 — not in MB's OpenAPI spec but
-// consistent across test sends. MB's exactOut flag does not move the fee off
-// the sender (both values tested live).
+// MB: 0.1%. MB charges it on top of the sender, but magicBlockProvider
+// requests amount / 1.001 so the sender's debit equals the entered amount —
+// the fee effectively comes out of what the recipient receives. The displayed
+// fee is therefore amount - amount/1.001 (≈ 0.0999% of the amount).
 export function estimateMbFee(amount: number): FeeEstimate {
   return {
-    feeUSDC: amount * 0.001,
+    feeUSDC: amount - amount / 1.001,
     breakdown: "0.1%",
   };
 }
