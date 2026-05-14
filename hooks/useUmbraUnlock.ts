@@ -7,9 +7,12 @@
  *   1. Scan claimable UTXOs and filter via the local tracker (drops
  *      already-claimed leaves the SDK scanner still returns).
  *   2. If unclaimed UTXOs exist, claim them via Umbra's relayer
- *      (gasless). Mark in tracker so future scans don't re-include them.
+ *      (gasless).
  *   3. Poll the encrypted balance until Arcium MPC has credited the
- *      claimed amount (~10–15s typical, capped at ~30s).
+ *      claimed amount (~10–15s typical, capped at ~30s). Only once the
+ *      credit is confirmed do we mark the UTXOs in the tracker — until
+ *      Arcium's callback fires the UTXO stays claimable on-chain, so
+ *      marking earlier would strand the balance if the callback hangs.
  *   4. Withdraw the requested amount from encrypted balance to the
  *      user's mainnet ATA via
  *      `getEncryptedBalanceToPublicBalanceDirectWithdrawerFunction`.
@@ -46,6 +49,13 @@ const USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 // Polling config for Arcium settlement after claim.
 const SETTLE_POLL_INTERVAL_MS = 2_000;
 const SETTLE_POLL_TIMEOUT_MS = 35_000;
+
+// Retry config for the tracker write. At this point the claim has
+// already settled on-chain, so a failed write would otherwise drop the
+// user into a stuck state (scanner keeps re-returning a spent UTXO).
+// A few short retries absorb transient Supabase blips.
+const MARK_RETRY_ATTEMPTS = 3;
+const MARK_RETRY_BASE_MS = 500;
 
 export type UmbraUnlockStage =
   | "idle"
@@ -93,6 +103,27 @@ async function pollUntilCredited(
     last = await readEncryptedBalance(client);
   }
   return last;
+}
+
+async function markUtxosClaimedWithRetry(
+  userAddress: string,
+  utxos: any[]
+): Promise<void> {
+  let lastErr: unknown;
+  for (let attempt = 0; attempt < MARK_RETRY_ATTEMPTS; attempt++) {
+    try {
+      await markUtxosClaimed(userAddress, utxos);
+      return;
+    } catch (err) {
+      lastErr = err;
+      if (attempt < MARK_RETRY_ATTEMPTS - 1) {
+        await new Promise((r) =>
+          setTimeout(r, MARK_RETRY_BASE_MS * 2 ** attempt)
+        );
+      }
+    }
+  }
+  throw lastErr;
 }
 
 export function useUmbraUnlock() {
@@ -172,7 +203,6 @@ export function useUmbraUnlock() {
               } as any
             );
           await claimReceiver(receiverUtxos as any);
-          await markUtxosClaimed(userAddress, receiverUtxos);
         }
         if (selfUtxos.length > 0) {
           const claimSelf =
@@ -186,14 +216,34 @@ export function useUmbraUnlock() {
               } as any
             );
           await claimSelf(selfUtxos as any);
-          await markUtxosClaimed(userAddress, selfUtxos);
         }
 
         // 3. Wait for Arcium MPC to credit the encrypted balance.
         setState({ stage: "settling", signature: null, error: null });
         // We expect at least pre + (pendingTotal − some-fee). Polling
         // until balance > preBalance is the safe lower bound.
-        await pollUntilCredited(client, preBalance + BigInt(1));
+        const finalBalance = await pollUntilCredited(
+          client,
+          preBalance + BigInt(1)
+        );
+
+        // Hard-gate: only mark UTXOs claimed once Arcium has actually
+        // credited the balance. If the callback never fired the UTXO is
+        // still claimable on-chain — surface a retryable error rather than
+        // marking it claimed and silently stranding the balance.
+        if (finalBalance <= preBalance) {
+          throw new Error(
+            "Claim timed out — encrypted balance was not credited. " +
+              "The funds are still claimable on-chain. Try again in a moment."
+          );
+        }
+
+        if (receiverUtxos.length > 0) {
+          await markUtxosClaimedWithRetry(userAddress, receiverUtxos);
+        }
+        if (selfUtxos.length > 0) {
+          await markUtxosClaimedWithRetry(userAddress, selfUtxos);
+        }
       }
 
       // 4. Read final available balance + withdraw.
