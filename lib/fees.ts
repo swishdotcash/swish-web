@@ -13,6 +13,11 @@
  *                                       tested live.)
  *   Umbra  0.7% on claim, all flows    (claim is unavoidable — SDK has no
  *                                       receiver-side path that skips it)
+ *
+ * Each estimate also reports `chargedOnTop`: true means the sender's wallet
+ * is debited amount + fee (MB); false means the recipient receives
+ * amount - fee (PC, Umbra). Drives the balance check and the
+ * "You Pay" / "They Receive" display in the send UI.
  */
 
 import type { ProviderId } from "./providers/types";
@@ -20,6 +25,9 @@ import type { ProviderId } from "./providers/types";
 export interface FeeEstimate {
   feeUSDC: number;
   breakdown: string;
+  // true  → sender pays amount + fee (fee is on top)
+  // false → recipient gets amount - fee (fee comes out of the amount)
+  chargedOnTop: boolean;
 }
 
 export type FlowKind = "send" | "fulfill" | "send_claim";
@@ -33,6 +41,7 @@ export function estimatePcFee(
   return {
     feeUSDC: baseFeeUSDC + bpsFee,
     breakdown: `${baseFeeUSDC.toFixed(2)} USDC base + 0.35%`,
+    chargedOnTop: false,
   };
 }
 
@@ -44,6 +53,7 @@ export function estimateMbFee(amount: number): FeeEstimate {
   return {
     feeUSDC: amount * 0.001,
     breakdown: "0.1%",
+    chargedOnTop: true,
   };
 }
 
@@ -67,6 +77,7 @@ export function estimateUmbraFee(amount: number, _flow: FlowKind): FeeEstimate {
   return {
     feeUSDC: fee,
     breakdown: "0.7% on claim",
+    chargedOnTop: false,
   };
 }
 
