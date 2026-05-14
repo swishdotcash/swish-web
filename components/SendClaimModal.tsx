@@ -20,10 +20,6 @@ interface SendClaimModalProps {
   isOpen: boolean;
   onClose: () => void;
   amount: string;
-  /** Sender's USDC balance. null while loading. */
-  balance: number | null;
-  /** Set the amount in the parent — used by the "send max" affordance. */
-  onUseMaxAmount: (amount: string) => void;
   getSignature: GetSessionSignature;
 }
 
@@ -38,8 +34,6 @@ export function SendClaimModal({
   isOpen,
   onClose,
   amount,
-  balance,
-  onUseMaxAmount,
   getSignature,
 }: SendClaimModalProps) {
   const [message, setMessage] = useState("");
@@ -81,39 +75,16 @@ export function SendClaimModal({
 
   // Per-protocol fee. SC has different fee structure than direct send:
   //   PC: base + 0.35% (deducted from claim)
-  //   MB: 0.1%, charged on top of the sender when funding the burner
+  //   MB: gas only
   //   Umbra: 0.7% on claim (protocol + relayer)
-  const {
-    feeUSDC: partnerFee,
-    breakdown: feeBreakdown,
-    chargedOnTop,
-  } = useProtocolFee(effectiveProvider, numAmount, "send_claim");
-
-  // What the sender's wallet is debited vs. what the recipient claims —
-  // differs by whether the protocol charges on top (MB) or out of the
-  // amount (PC, Umbra).
-  const senderCost = chargedOnTop ? numAmount + partnerFee : numAmount;
-  const theyReceive = chargedOnTop ? numAmount : numAmount - partnerFee;
-
-  // Fee-aware balance check. For on-top protocols the sender needs
-  // amount + fee, so entering exactly their balance would fail on-chain.
-  const exceedsBalanceWithFee =
-    balance !== null && numAmount > 0 && senderCost > balance + 1e-6;
-
-  // Largest amount the sender can afford given the on-top fee. feeRate
-  // derived from the current estimate; truncated (never rounded up) to
-  // 6-decimal USDC.
-  const feeRate = numAmount > 0 ? partnerFee / numAmount : 0;
-  const maxSendable =
-    balance === null
-      ? null
-      : chargedOnTop
-        ? Math.floor((balance / (1 + feeRate)) * 1e6) / 1e6
-        : balance;
+  const { feeUSDC: partnerFee, breakdown: feeBreakdown } = useProtocolFee(
+    effectiveProvider,
+    numAmount,
+    "send_claim"
+  );
+  const total = numAmount - partnerFee;
 
   const handleProceed = async () => {
-    if (exceedsBalanceWithFee) return;
-
     // Resolve the dispatch provider. If the user picked Auto and
     // useAutoRoute hasn't returned yet (rare — auth + senderAddress
     // happen before the modal opens in practice), fall back to PC so
@@ -310,43 +281,17 @@ export function SendClaimModal({
                 </div>
                 <span className="text-[#121212]">~{formatNumber(partnerFee)} USDC</span>
               </div>
-              {chargedOnTop && (
-                <div className="flex justify-between">
-                  <span className="text-[#121212]">You Pay</span>
-                  <span className="text-[#121212]">~{formatNumber(senderCost)} USDC</span>
-                </div>
-              )}
               <div className="flex justify-between">
                 <span className="text-[#121212] font-semibold">They Receive</span>
-                <span className="text-[#121212] font-semibold">~{formatNumber(theyReceive)} USDC</span>
+                <span className="text-[#121212] font-semibold">~{formatNumber(total)} USDC</span>
               </div>
             </div>
-
-            {/* Fee-aware balance warning */}
-            {exceedsBalanceWithFee && (
-              <div className="-mt-4 mb-6 text-sm text-red-500">
-                Amount + fee (~{formatNumber(senderCost)} USDC) exceeds your
-                balance.
-                {maxSendable !== null && maxSendable > 0 && (
-                  <>
-                    {" "}
-                    <button
-                      onClick={() => onUseMaxAmount(String(maxSendable))}
-                      className="underline underline-offset-2 decoration-dashed hover:text-red-600"
-                    >
-                      Send max ({formatNumber(maxSendable)} USDC)
-                    </button>
-                  </>
-                )}
-              </div>
-            )}
 
             {/* Proceed Button */}
             <motion.button
               onClick={handleProceed}
-              disabled={exceedsBalanceWithFee}
               whileTap={{ scale: 0.98 }}
-              className="w-full h-10 bg-[#121212] rounded-full flex items-center justify-center text-[#fafafa] font-semibold transition-opacity disabled:opacity-40 disabled:cursor-not-allowed shadow-[0_4px_12px_rgba(18,18,18,0.15)]"
+              className="w-full h-10 bg-[#121212] rounded-full flex items-center justify-center text-[#fafafa] font-semibold transition-opacity shadow-[0_4px_12px_rgba(18,18,18,0.15)]"
             >
               Proceed
             </motion.button>
@@ -383,15 +328,9 @@ export function SendClaimModal({
                 <span className="text-[#121212]">Partner Fees</span>
                 <span className="text-[#121212]">~{formatNumber(partnerFee)} USDC</span>
               </div>
-              {chargedOnTop && (
-                <div className="flex justify-between">
-                  <span className="text-[#121212]">You Pay</span>
-                  <span className="text-[#121212]">~{formatNumber(senderCost)} USDC</span>
-                </div>
-              )}
               <div className="flex justify-between">
                 <span className="text-[#121212] font-semibold">They Receive</span>
-                <span className="text-[#121212] font-semibold">~{formatNumber(theyReceive)} USDC</span>
+                <span className="text-[#121212] font-semibold">~{formatNumber(total)} USDC</span>
               </div>
             </div>
 

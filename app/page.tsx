@@ -282,8 +282,6 @@ export default function Home() {
           isOpen={true}
           onClose={closeModal}
           amount={amount}
-          balance={balance}
-          onUseMaxAmount={setAmount}
           onSendViaClaim={() => setActiveModal("sendClaim")}
           getSignature={getSignature}
         />
@@ -303,8 +301,6 @@ export default function Home() {
           isOpen={true}
           onClose={closeModal}
           amount={amount}
-          balance={balance}
-          onUseMaxAmount={setAmount}
           getSignature={getSignature}
         />
       )}

@@ -24,10 +24,6 @@ interface SendModalProps {
   isOpen: boolean;
   onClose: () => void;
   amount: string;
-  /** Sender's USDC balance. null while loading. */
-  balance: number | null;
-  /** Set the amount in the parent — used by the "send max" affordance. */
-  onUseMaxAmount: (amount: string) => void;
   onSendViaClaim: () => void;
   getSignature: GetSessionSignature;
 }
@@ -40,8 +36,6 @@ export function SendModal({
   isOpen,
   onClose,
   amount,
-  balance,
-  onUseMaxAmount,
   onSendViaClaim,
   getSignature,
 }: SendModalProps) {
@@ -115,37 +109,15 @@ export function SendModal({
   const effectiveProvider: ProviderId | "auto" =
     provider === "auto" ? (autoResolved ?? "auto") : provider;
 
-  const {
-    feeUSDC: partnerFee,
-    breakdown: feeBreakdown,
-    chargedOnTop,
-  } = useProtocolFee(effectiveProvider, numAmount, "send");
-
-  // What the sender's wallet is actually debited vs. what the recipient
-  // ends up with — differs by whether the protocol charges on top (MB) or
-  // takes the fee out of the amount (PC, Umbra).
-  const senderCost = chargedOnTop ? numAmount + partnerFee : numAmount;
-  const theyReceive = chargedOnTop ? numAmount : numAmount - partnerFee;
-
-  // Fee-aware balance check. For on-top protocols the sender needs
-  // amount + fee, so entering exactly their balance would fail on-chain.
-  const exceedsBalanceWithFee =
-    balance !== null && numAmount > 0 && senderCost > balance + 1e-6;
-
-  // Largest amount the sender can actually afford given the on-top fee.
-  // feeRate is derived from the current estimate so it stays correct if
-  // the rate ever changes. Truncated (never rounded up) to 6-decimal USDC.
-  const feeRate = numAmount > 0 ? partnerFee / numAmount : 0;
-  const maxSendable =
-    balance === null
-      ? null
-      : chargedOnTop
-        ? Math.floor((balance / (1 + feeRate)) * 1e6) / 1e6
-        : balance;
+  const { feeUSDC: partnerFee, breakdown: feeBreakdown } = useProtocolFee(
+    effectiveProvider,
+    numAmount,
+    "send"
+  );
+  const total = numAmount - partnerFee;
 
   const canProceed =
-    (recipientType === "wallet" ? isValidAddress : isValidXHandle) &&
-    !exceedsBalanceWithFee;
+    recipientType === "wallet" ? isValidAddress : isValidXHandle;
 
   // Debounced recipient registration check. Wallet mode hits
   // /api/umbra/status (on-chain only). X mode hits /api/user/check-x
@@ -580,42 +552,15 @@ export function SendModal({
                     ~{formatNumber(partnerFee)} USDC
                   </span>
                 </div>
-                {chargedOnTop && (
-                  <div className="flex justify-between">
-                    <span className="text-[#121212]">You Pay</span>
-                    <span className="text-[#121212]">
-                      ~{formatNumber(senderCost)} USDC
-                    </span>
-                  </div>
-                )}
                 <div className="flex justify-between">
                   <span className="text-[#121212] font-semibold">
                     They Receive
                   </span>
                   <span className="text-[#121212] font-semibold">
-                    ~{formatNumber(theyReceive)} USDC
+                    ~{formatNumber(total)} USDC
                   </span>
                 </div>
               </div>
-
-              {/* Fee-aware balance warning */}
-              {exceedsBalanceWithFee && (
-                <div className="-mt-4 mb-6 text-sm text-red-500">
-                  Amount + fee (~{formatNumber(senderCost)} USDC) exceeds your
-                  balance.
-                  {maxSendable !== null && maxSendable > 0 && (
-                    <>
-                      {" "}
-                      <button
-                        onClick={() => onUseMaxAmount(String(maxSendable))}
-                        className="underline underline-offset-2 decoration-dashed hover:text-red-600"
-                      >
-                        Send max ({formatNumber(maxSendable)} USDC)
-                      </button>
-                    </>
-                  )}
-                </div>
-              )}
 
               {/* Proceed Button */}
               <motion.button
@@ -694,20 +639,12 @@ export function SendModal({
                     ~{formatNumber(partnerFee)} USDC
                   </span>
                 </div>
-                {chargedOnTop && (
-                  <div className="flex justify-between">
-                    <span className="text-[#121212]">You Pay</span>
-                    <span className="text-[#121212]">
-                      ~{formatNumber(senderCost)} USDC
-                    </span>
-                  </div>
-                )}
                 <div className="flex justify-between">
                   <span className="text-[#121212] font-semibold">
                     They Receive
                   </span>
                   <span className="text-[#121212] font-semibold">
-                    ~{formatNumber(theyReceive)} USDC
+                    ~{formatNumber(total)} USDC
                   </span>
                 </div>
               </div>
