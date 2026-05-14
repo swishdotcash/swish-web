@@ -50,6 +50,13 @@ const USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 const SETTLE_POLL_INTERVAL_MS = 2_000;
 const SETTLE_POLL_TIMEOUT_MS = 35_000;
 
+// Retry config for the tracker write. At this point the claim has
+// already settled on-chain, so a failed write would otherwise drop the
+// user into a stuck state (scanner keeps re-returning a spent UTXO).
+// A few short retries absorb transient Supabase blips.
+const MARK_RETRY_ATTEMPTS = 3;
+const MARK_RETRY_BASE_MS = 500;
+
 export type UmbraUnlockStage =
   | "idle"
   | "scanning"
@@ -96,6 +103,27 @@ async function pollUntilCredited(
     last = await readEncryptedBalance(client);
   }
   return last;
+}
+
+async function markUtxosClaimedWithRetry(
+  userAddress: string,
+  utxos: any[]
+): Promise<void> {
+  let lastErr: unknown;
+  for (let attempt = 0; attempt < MARK_RETRY_ATTEMPTS; attempt++) {
+    try {
+      await markUtxosClaimed(userAddress, utxos);
+      return;
+    } catch (err) {
+      lastErr = err;
+      if (attempt < MARK_RETRY_ATTEMPTS - 1) {
+        await new Promise((r) =>
+          setTimeout(r, MARK_RETRY_BASE_MS * 2 ** attempt)
+        );
+      }
+    }
+  }
+  throw lastErr;
 }
 
 export function useUmbraUnlock() {
@@ -211,10 +239,10 @@ export function useUmbraUnlock() {
         }
 
         if (receiverUtxos.length > 0) {
-          await markUtxosClaimed(userAddress, receiverUtxos);
+          await markUtxosClaimedWithRetry(userAddress, receiverUtxos);
         }
         if (selfUtxos.length > 0) {
-          await markUtxosClaimed(userAddress, selfUtxos);
+          await markUtxosClaimedWithRetry(userAddress, selfUtxos);
         }
       }
 
