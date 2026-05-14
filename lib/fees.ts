@@ -4,8 +4,12 @@
  *
  * Per-protocol summary:
  *   PC     $0.71 base + 0.35%          (Pyth-derived base + bps)
- *   MB     gas only                    (published 0.002 SOL + 0.1% not firing
- *                                       on mainnet today; revisit on audit)
+ *   MB     0.1%                        (verified live 2026-05-14: $1 send
+ *                                       debited 1.001, $2 debited 2.002. Not
+ *                                       in MB's OpenAPI spec but empirically
+ *                                       consistent. Charged via exactOut:false
+ *                                       so it comes out of the recipient
+ *                                       amount, not on top of the sender.)
  *   Umbra  0.7% on claim, all flows    (claim is unavoidable — SDK has no
  *                                       receiver-side path that skips it)
  */
@@ -31,11 +35,14 @@ export function estimatePcFee(
   };
 }
 
-// MB: protocol charges 0 in practice (gas-only), sponsor pays the gas
-export function estimateMbFee(_amount: number): FeeEstimate {
+// MB: 0.1% on the transfer amount. Verified live 2026-05-14 — not documented
+// in MB's OpenAPI spec, but consistent across test sends. Charged via
+// exactOut:false (see magicBlockProvider), so it's deducted from the recipient
+// amount rather than added on top of the sender.
+export function estimateMbFee(amount: number): FeeEstimate {
   return {
-    feeUSDC: 0,
-    breakdown: "gas only",
+    feeUSDC: amount * 0.001,
+    breakdown: "0.1%",
   };
 }
 

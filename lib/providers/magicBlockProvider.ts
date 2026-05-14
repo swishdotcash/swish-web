@@ -108,6 +108,11 @@ async function buildPrivateTransfer(params: {
     fromBalance: "base",
     toBalance: "base",
     initAtasIfMissing: true,
+    // MB charges 0.1% on transfers. exactOut:false deducts it from the
+    // recipient amount instead of charging the sender on top — so the
+    // sender's debit equals the entered amount and sending a full balance
+    // ("max") works. Verify this behaves as documented before relying on it.
+    exactOut: false,
   });
 
   if (!response.requiredSigners.includes(from.toBase58())) {

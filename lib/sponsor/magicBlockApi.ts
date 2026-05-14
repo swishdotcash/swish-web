@@ -38,6 +38,9 @@ export interface MagicBlockTransferRequest {
   initAtasIfMissing?: boolean;
   initVaultIfMissing?: boolean;
   memo?: string;
+  // When false, the transfer fee is deducted from the recipient amount
+  // instead of charged on top of the sender.
+  exactOut?: boolean;
   // Private-only:
   minDelayMs?: string;
   maxDelayMs?: string;
