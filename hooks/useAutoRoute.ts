@@ -32,6 +32,7 @@ interface UseAutoRouteResult {
   resolved: ProviderId | null;
   reason: string | null;
   isLoading: boolean;
+  unavailable: boolean;
 }
 
 export function useAutoRoute(args: UseAutoRouteArgs): UseAutoRouteResult {
@@ -39,12 +40,14 @@ export function useAutoRoute(args: UseAutoRouteArgs): UseAutoRouteResult {
   const [resolved, setResolved] = useState<ProviderId | null>(null);
   const [reason, setReason] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [unavailable, setUnavailable] = useState(false);
 
   useEffect(() => {
     if (!enabled || !senderAddress) {
       setResolved(null);
       setReason(null);
       setIsLoading(false);
+      setUnavailable(false);
       return;
     }
 
@@ -60,17 +63,19 @@ export function useAutoRoute(args: UseAutoRouteArgs): UseAutoRouteResult {
             : "");
         const res = await fetch(url);
         const json = (await res.json()) as {
-          providerId: ProviderId;
+          providerId: ProviderId | null;
           reason: string;
+          unavailable?: boolean;
         };
         if (cancelled) return;
         setResolved(json.providerId);
         setReason(json.reason);
+        setUnavailable(!!json.unavailable);
       } catch (err) {
         if (cancelled) return;
-        // Graceful degrade — fall through to MB so the modal can proceed.
-        setResolved("magicblock-per");
+        setResolved(null);
         setReason("preview-fetch-error");
+        setUnavailable(false);
       } finally {
         if (!cancelled) setIsLoading(false);
       }
@@ -81,5 +86,5 @@ export function useAutoRoute(args: UseAutoRouteArgs): UseAutoRouteResult {
     };
   }, [enabled, flow, senderAddress, receiverAddress]);
 
-  return { resolved, reason, isLoading };
+  return { resolved, reason, isLoading, unavailable };
 }

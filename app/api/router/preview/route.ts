@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
+import { isProviderDisabled } from "@/lib/providers";
 import { resolveAutoRoute, type AutoFlow } from "@/lib/router/autoRoute";
 
 const VALID_FLOWS: AutoFlow[] = ["send", "fulfill", "send_claim"];
@@ -34,20 +35,44 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const result = await resolveAutoRoute({
-      flow,
-      senderAddress: sender,
-      receiverAddress: receiver || null,
-    });
+    let result;
+    try {
+      result = await resolveAutoRoute({
+        flow,
+        senderAddress: sender,
+        receiverAddress: receiver || null,
+      });
+    } catch (routeErr: any) {
+      // resolveAutoRoute throws when every eligible provider is disabled.
+      // Surface this honestly so the client can disable Proceed instead
+      // of silently routing to a disabled provider.
+      return NextResponse.json(
+        { providerId: null, unavailable: true, reason: routeErr.message },
+        { status: 200 }
+      );
+    }
+
+    // Belt-and-braces: if the resolved provider somehow ended up disabled
+    // (shouldn't happen given the router's checks, but env reads are cheap
+    // and a wrong route here is much more expensive than the extra check),
+    // mark unavailable.
+    if (isProviderDisabled(result.providerId)) {
+      return NextResponse.json(
+        {
+          providerId: null,
+          unavailable: true,
+          reason: `auto resolved to ${result.providerId} but it is disabled`,
+        },
+        { status: 200 }
+      );
+    }
 
     return NextResponse.json(result);
   } catch (err: any) {
     console.error("Auto-route preview failed:", err);
-    // Graceful degrade — pick MB as the safe default so the modal can
-    // still proceed even if our preview path fails.
     return NextResponse.json(
-      { providerId: "magicblock-per", reason: `preview-error: ${err.message}` },
-      { status: 200 }
+      { error: `preview-error: ${err.message}` },
+      { status: 500 }
     );
   }
 }

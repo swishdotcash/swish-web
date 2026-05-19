@@ -23,6 +23,7 @@
  */
 
 import type { ProviderId } from "@/lib/providers/types";
+import { isProviderDisabled } from "@/lib/providers/maintenance";
 import { isAddressRegisteredOnUmbra } from "@/lib/sponsor/umbraBurner";
 
 export type AutoFlow = "send" | "fulfill" | "send_claim";
@@ -63,17 +64,27 @@ async function isMagicBlockLive(): Promise<boolean> {
 export async function resolveAutoRoute(
   ctx: AutoRouteContext
 ): Promise<AutoRouteResult> {
+  const umbraDisabled = isProviderDisabled("umbra");
+  const mbDisabled = isProviderDisabled("magicblock-per");
+  const pcDisabled = isProviderDisabled("privacy-cash");
+
   // SC never routes through Umbra; only MB-or-PC for SC.
   if (ctx.flow === "send_claim") {
-    const mbLive = await isMagicBlockLive();
-    return mbLive
-      ? { providerId: "magicblock-per", reason: "send_claim → mb (live)" }
-      : { providerId: "privacy-cash", reason: "send_claim → pc (mb down)" };
+    if (!mbDisabled) {
+      const mbLive = await isMagicBlockLive();
+      if (mbLive) {
+        return { providerId: "magicblock-per", reason: "send_claim → mb (live)" };
+      }
+    }
+    if (!pcDisabled) {
+      return { providerId: "privacy-cash", reason: "send_claim → pc (mb unavailable)" };
+    }
+    throw new Error("No provider available for send_claim (all disabled or down)");
   }
 
   // For send/fulfill, check Umbra eligibility first (registration is the
   // dominant gate — falls through to MB/PC if either side isn't on Umbra).
-  if (ctx.receiverAddress) {
+  if (!umbraDisabled && ctx.receiverAddress) {
     const [senderRegistered, receiverRegistered] = await Promise.all([
       isAddressRegisteredOnUmbra(ctx.senderAddress).catch(() => false),
       isAddressRegisteredOnUmbra(ctx.receiverAddress).catch(() => false),
@@ -86,8 +97,14 @@ export async function resolveAutoRoute(
 
   // Neither side eligible for Umbra (or receiver unknown — e.g. X-handle
   // pre-resolve). Pick MB if live, else PC.
-  const mbLive = await isMagicBlockLive();
-  return mbLive
-    ? { providerId: "magicblock-per", reason: "umbra ineligible → mb (live)" }
-    : { providerId: "privacy-cash", reason: "umbra ineligible → pc (mb down)" };
+  if (!mbDisabled) {
+    const mbLive = await isMagicBlockLive();
+    if (mbLive) {
+      return { providerId: "magicblock-per", reason: "umbra ineligible → mb (live)" };
+    }
+  }
+  if (!pcDisabled) {
+    return { providerId: "privacy-cash", reason: "umbra ineligible → pc (mb unavailable)" };
+  }
+  throw new Error("No provider available (all disabled or down)");
 }

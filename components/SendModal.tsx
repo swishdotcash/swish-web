@@ -19,6 +19,16 @@ import {
   type GetSessionSignature,
 } from "@/hooks/useSessionSignature";
 import type { ProviderId } from "@/lib/providers/types";
+import {
+  areAllProvidersDisabled,
+  isProviderDisabled,
+} from "@/lib/providers/maintenance";
+
+const SEND_PROVIDER_POOL: ProviderId[] = [
+  "umbra",
+  "magicblock-per",
+  "privacy-cash",
+];
 
 interface SendModalProps {
   isOpen: boolean;
@@ -88,7 +98,8 @@ export function SendModal({
   // preview handles null receiver gracefully (falls through to MB/PC).
   const xResolveSettled =
     recipientUmbraStatus !== "idle" && recipientUmbraStatus !== "checking";
-  const { resolved: autoResolved } = useAutoRoute({
+  const noAutoTarget = areAllProvidersDisabled(SEND_PROVIDER_POOL);
+  const { resolved: autoResolved, unavailable: autoUnavailable } = useAutoRoute({
     enabled:
       provider === "auto" &&
       ((recipientType === "wallet" && isValidAddress) ||
@@ -449,11 +460,22 @@ export function SendModal({
                 </label>
                 <div className="space-y-1.5">
                   <button
-                    onClick={() => setProvider("auto")}
+                    onClick={() => {
+                      if (noAutoTarget) return;
+                      setProvider("auto");
+                    }}
+                    disabled={noAutoTarget}
+                    title={
+                      noAutoTarget
+                        ? "All privacy protocols are temporarily unavailable"
+                        : undefined
+                    }
                     className={`w-fit min-w-[72px] h-9 px-4 rounded-full text-xs font-medium transition-all flex items-center justify-center ${
                       provider === "auto"
                         ? "bg-[#121212] text-[#fafafa]"
-                        : "bg-[#121212]/5 text-[#121212]/70 hover:bg-[#121212]/10"
+                        : noAutoTarget
+                          ? "bg-[#121212]/5 text-[#121212]/30 cursor-not-allowed opacity-40"
+                          : "bg-[#121212]/5 text-[#121212]/70 hover:bg-[#121212]/10"
                     }`}
                   >
                     Auto
@@ -471,20 +493,28 @@ export function SendModal({
                       const recipientUmbraDisabled =
                         p === "umbra" &&
                         recipientUmbraStatus === "unregistered";
-                      const isUmbraDisabled =
-                        senderUmbraDisabled || recipientUmbraDisabled;
+                      const maintenanceDisabled = isProviderDisabled(p);
+                      const isDisabled =
+                        senderUmbraDisabled ||
+                        recipientUmbraDisabled ||
+                        maintenanceDisabled;
                       return (
                         <button
                           key={p}
                           onClick={() => {
-                            if (isUmbraDisabled) return;
+                            if (isDisabled) return;
                             setProvider(p);
                           }}
-                          disabled={isUmbraDisabled}
+                          disabled={isDisabled}
+                          title={
+                            maintenanceDisabled
+                              ? "Temporarily unavailable (maintenance)"
+                              : undefined
+                          }
                           className={`flex-1 min-w-[72px] h-9 rounded-full text-xs font-medium transition-all flex items-center justify-center ${
                             provider === p
                               ? "bg-[#121212] text-[#fafafa]"
-                              : isUmbraDisabled
+                              : isDisabled
                                 ? "bg-[#121212]/5 text-[#121212]/30 cursor-not-allowed opacity-40"
                                 : "bg-[#121212]/5 text-[#121212]/70 hover:bg-[#121212]/10"
                           }`}
@@ -565,7 +595,12 @@ export function SendModal({
               {/* Proceed Button */}
               <motion.button
                 onClick={handleProceed}
-                disabled={!canProceed || isResolvingX || umbraBlockedByRecipient}
+                disabled={
+                  !canProceed ||
+                  isResolvingX ||
+                  umbraBlockedByRecipient ||
+                  (provider === "auto" && (noAutoTarget || autoUnavailable))
+                }
                 whileTap={{ scale: 0.98 }}
                 className="w-full h-10 bg-[#121212] rounded-full flex items-center justify-center text-[#fafafa] font-semibold disabled:opacity-40 disabled:cursor-not-allowed transition-opacity shadow-[0_4px_12px_rgba(18,18,18,0.15)]"
               >

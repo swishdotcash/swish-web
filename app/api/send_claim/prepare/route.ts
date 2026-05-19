@@ -5,6 +5,7 @@ import nacl from "tweetnacl";
 import { TokenType } from "@/lib/privacycash/tokens";
 import {
   getProvider,
+  isProviderDisabled,
   isProviderId,
   type ProviderId,
 } from "@/lib/providers";
@@ -80,6 +81,13 @@ export async function POST(request: NextRequest) {
         receiverAddress: null,
       });
       providerId = auto.providerId;
+    }
+
+    if (isProviderDisabled(providerId)) {
+      return NextResponse.json(
+        { error: `Provider ${providerId} is temporarily unavailable (maintenance)` },
+        { status: 503 }
+      );
     }
 
     // Parse inputs
