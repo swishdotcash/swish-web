@@ -13,6 +13,16 @@ import { useAutoRoute } from "@/hooks/useAutoRoute";
 import { useUmbraFulfill } from "@/hooks/useUmbraFulfill";
 import { useUmbraStatus } from "@/hooks/useUmbraStatus";
 import type { ProviderId } from "@/lib/providers/types";
+import {
+  areAllProvidersDisabled,
+  isProviderDisabled,
+} from "@/lib/providers/maintenance";
+
+const FULFILL_PROVIDER_POOL: ProviderId[] = [
+  "umbra",
+  "magicblock-per",
+  "privacy-cash",
+];
 
 interface RequestData {
   id: string;
@@ -65,7 +75,8 @@ export default function RequestPage({
   // Resolve Auto for the payer once we know both addresses (payer's
   // wallet + requester's address from the row). The hook gracefully
   // sits idle when inputs aren't ready.
-  const { resolved: autoResolved } = useAutoRoute({
+  const noAutoTarget = areAllProvidersDisabled(FULFILL_PROVIDER_POOL);
+  const { resolved: autoResolved, unavailable: autoUnavailable } = useAutoRoute({
     enabled: provider === "auto" && !!requestData?.receiverAddress,
     flow: "fulfill",
     senderAddress: walletAddress,
@@ -511,11 +522,22 @@ export default function RequestPage({
           </label>
           <div className="space-y-1.5">
             <button
-              onClick={() => setProvider("auto")}
+              onClick={() => {
+                if (noAutoTarget) return;
+                setProvider("auto");
+              }}
+              disabled={noAutoTarget}
+              title={
+                noAutoTarget
+                  ? "All privacy protocols are temporarily unavailable"
+                  : undefined
+              }
               className={`w-fit min-w-[72px] h-9 px-4 rounded-full text-xs font-medium transition-all flex items-center justify-center ${
                 provider === "auto"
                   ? "bg-[#121212] text-[#fafafa]"
-                  : "bg-[#121212]/5 text-[#121212]/70 hover:bg-[#121212]/10"
+                  : noAutoTarget
+                    ? "bg-[#121212]/5 text-[#121212]/30 cursor-not-allowed opacity-40"
+                    : "bg-[#121212]/5 text-[#121212]/70 hover:bg-[#121212]/10"
               }`}
             >
               Auto
@@ -528,22 +550,29 @@ export default function RequestPage({
                   "privacy-cash",
                 ] as ProviderId[]
               ).map((p) => {
-                const isUmbraDisabled =
+                const umbraIneligible =
                   p === "umbra" &&
                   (umbraStatus !== "registered" ||
                     requesterUmbraStatus === "unregistered");
+                const maintenanceDisabled = isProviderDisabled(p);
+                const isDisabled = umbraIneligible || maintenanceDisabled;
                 return (
                   <button
                     key={p}
                     onClick={() => {
-                      if (isUmbraDisabled) return;
+                      if (isDisabled) return;
                       setProvider(p);
                     }}
-                    disabled={isUmbraDisabled}
+                    disabled={isDisabled}
+                    title={
+                      maintenanceDisabled
+                        ? "Temporarily unavailable (maintenance)"
+                        : undefined
+                    }
                     className={`flex-1 min-w-[72px] h-9 rounded-full text-xs font-medium transition-all flex items-center justify-center ${
                       provider === p
                         ? "bg-[#121212] text-[#fafafa]"
-                        : isUmbraDisabled
+                        : isDisabled
                           ? "bg-[#121212]/5 text-[#121212]/30 cursor-not-allowed opacity-40"
                           : "bg-[#121212]/5 text-[#121212]/70 hover:bg-[#121212]/10"
                     }`}
@@ -573,8 +602,9 @@ export default function RequestPage({
       {pageState === "ready" && !isRequestor && (
         <motion.button
           onClick={handlePay}
+          disabled={provider === "auto" && (noAutoTarget || autoUnavailable)}
           whileTap={{ scale: 0.98 }}
-          className="w-full max-w-[320px] h-12 bg-[#121212] rounded-full flex items-center justify-center text-[#fafafa] font-semibold shadow-[0_4px_12px_rgba(18,18,18,0.15)]"
+          className="w-full max-w-[320px] h-12 bg-[#121212] rounded-full flex items-center justify-center text-[#fafafa] font-semibold disabled:opacity-40 disabled:cursor-not-allowed shadow-[0_4px_12px_rgba(18,18,18,0.15)]"
         >
           Fulfill
         </motion.button>

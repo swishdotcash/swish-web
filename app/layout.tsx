@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { Jost } from "next/font/google";
 import "./globals.css";
 import Providers from "./providers";
-import { Logo, Footer } from "@/components";
+import { Logo, Footer, MaintenanceBanner } from "@/components";
 
 // Force dynamic rendering for all pages - required for Privy auth
 export const dynamic = "force-dynamic";
@@ -44,6 +44,7 @@ export default function RootLayout({
         <Providers>
           <div className="mx-auto w-full max-w-107.5 min-h-screen bg-[#fafafa] relative">
             <div className="min-h-screen flex flex-col">
+              <MaintenanceBanner />
               {/* Header with Logo */}
               <header className="flex justify-center pt-8 pb-4">
                 <Logo />

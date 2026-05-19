@@ -6,6 +6,7 @@ import { TokenType } from "@/lib/privacycash/tokens";
 import {
   DEFAULT_PROVIDER_ID,
   getProvider,
+  isProviderDisabled,
   isProviderId,
   type ProviderId,
 } from "@/lib/providers";
@@ -57,6 +58,13 @@ export async function POST(request: NextRequest) {
         );
       }
       providerId = providerIdInput;
+    }
+
+    if (isProviderDisabled(providerId)) {
+      return NextResponse.json(
+        { error: `Provider ${providerId} is temporarily unavailable (maintenance)` },
+        { status: 503 }
+      );
     }
 
     // Validation

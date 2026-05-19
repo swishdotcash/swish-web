@@ -14,3 +14,4 @@ export { WithdrawModal } from "./WithdrawModal";
 export { UnlockModal } from "./UnlockModal";
 export { ProtocolBadge } from "./ProtocolBadge";
 export { WalletStatus } from "./WalletStatus";
+export { MaintenanceBanner } from "./MaintenanceBanner";
